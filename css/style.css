@@ -319,6 +319,41 @@ button.primary:hover:not(:disabled) { background: var(--accent-hover); }
   margin: 0;
 }
 
+.sample-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.sample-tile {
+  background: var(--btn-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+  text-align: left;
+  color: var(--text);
+}
+.sample-tile:hover { border-color: var(--accent); }
+.sample-tile img {
+  width: 100%;
+  height: 110px;
+  object-fit: cover;
+  display: block;
+}
+.sample-tile .sample-caption {
+  padding: 8px 10px;
+}
+.sample-tile .sample-title {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.sample-tile .sample-credit {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
 @media (max-width: 760px) {
   #app { flex-direction: column; }
   #panel { width: 100%; min-width: 0; height: 45vh; border-right: none; border-bottom: 1px solid var(--border); }

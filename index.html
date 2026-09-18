@@ -21,6 +21,9 @@
     <div class="button-row">
       <button id="pasteBtn">Paste from Clipboard (Ctrl+V)</button>
     </div>
+    <div class="button-row">
+      <button id="sampleImageBtn">Try a Sample Image...</button>
+    </div>
     <input type="file" id="fileInput" accept="image/*" hidden>
 
     <label for="gridWidth">Grid width (cells)</label>
@@ -86,6 +89,7 @@
     <div class="button-row"><button id="exportPngBtn" disabled>Save Image (PNG)</button></div>
     <div class="button-row"><button id="exportJsonBtn" disabled>Save Grid Data (JSON)</button></div>
     <div class="button-row"><button id="exportCsvBtn" disabled>Save Grid Data (CSV)</button></div>
+    <div class="button-row"><button id="exportPaintByNumberBtn" disabled>Save Paint-by-Number (PDF)</button></div>
 
     <p class="footer-note">Pixel Mosaic &mdash; Dadoo Labs</p>
   </aside>
@@ -120,6 +124,7 @@
 <div id="dialogRoot"></div>
 
 <script src="vendor/jszip.min.js"></script>
+<script src="vendor/jspdf.umd.min.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

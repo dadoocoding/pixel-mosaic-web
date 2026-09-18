@@ -2,7 +2,7 @@
 
 Browser port of the desktop Pixel Mosaic app. Pure client-side JS (no build
 step, no server) — matches your existing dadoolabs.com plan of vanilla
-HTML/CSS/JS on GitHub Pages.
+HTML/CSS/JS on GitHub Pages. Live at pixel.dadoolabs.com.
 
 ## Test it locally first
 
@@ -21,8 +21,9 @@ If you use VS Code, the "Live Server" extension works the same way.
 ## What's implemented (feature parity with the desktop app)
 
 - Image load: file picker, drag-and-drop (including dragging an image *from
-  another browser tab* — more reliable here than on desktop), and clipboard
-  paste (button or Ctrl+V)
+  another browser tab* — more reliable here than on desktop), clipboard
+  paste (button or Ctrl+V), and a "Try a Sample Image" picker with 5 bundled
+  public domain/CC0 images for visitors who don't have one handy
 - Grid width/height with aspect-lock, live output-size estimate
 - Color source: Auto (K-Means), Fixed Palette (built-in LEGO Solid Colors or
   import your own CSV/JSON), Monochrome ramp
@@ -42,6 +43,24 @@ checks used for the Python version (round-trip accuracy, brute-force
 hit-testing, zero-overlap/full-coverage panel and brick reconstruction) —
 see the "how this was tested" note at the end.
 
+## Sample images (`samples/`)
+
+Five bundled images, picked for variety in color range and detail level, all
+genuinely public domain or CC0 (not just "free to use" — verified license per
+image, sourced from scikit-image's bundled sample data, which documents
+provenance for each one):
+
+| File | Subject | Credit |
+|---|---|---|
+| `astronaut.jpg` | Portrait (Eileen Collins) | NASA — public domain |
+| `hubble_deep_field.jpg` | Deep space field | NASA — public domain |
+| `rocket.jpg` | Falcon 9 launch, twilight | SpaceX — public domain |
+| `coffee.jpg` | Still life | Rachel Michetti — CC0 |
+| `horse.png` | Graphic silhouette | Andreas Preuss — CC0 |
+
+Total payload ~350KB. Swap these out any time by editing the `SAMPLE_IMAGES`
+array near the top of `js/app.js` and dropping matching files in `samples/`.
+
 ## Two real platform differences from the desktop app
 
 1. **Multi-file exports are zipped.** The desktop version writes a folder
@@ -54,22 +73,11 @@ see the "how this was tested" note at the end.
    image's server may block for cross-origin requests — this is a browser
    security rule, not something fixable client-side. If a URL-drop fails,
    paste works around it (right-click the image → Copy Image → Paste from
-   Clipboard button, or Ctrl+V).
+   Clipboard button, or Ctrl+V) — or use one of the bundled sample images,
+   which load with no such restriction since they're same-origin.
 
 Clipboard read/write needs a "secure context" (HTTPS, or `localhost` — both
-your local test server and the eventual pixel.dadoolabs.com deployment
-qualify).
-
-## Deploying later (once you're happy with local testing)
-
-This folder *is* the GitHub Pages repo root. When ready:
-
-1. Push this folder's contents to a GitHub repo.
-2. In the repo's GitHub Pages settings, add custom domain `pixel.dadoolabs.com`
-   (this creates a `CNAME` file in the repo — not included yet since we're
-   not live).
-3. Add a DNS `CNAME` record for `pixel` pointing at `<your-username>.github.io`,
-   same pattern as your other dadoolabs.com subdomains.
+your local test server and the pixel.dadoolabs.com deployment qualify).
 
 ## How this was tested
 
@@ -85,10 +93,9 @@ Since this sandbox has no real browser, testing split into two layers:
   sample points with zero mismatches.
 - **The app itself** (`app.js` against the real `index.html`) — smoke-tested
   with jsdom to confirm it initializes cleanly with no undefined-element or
-  runtime errors.
+  runtime errors, including opening the sample-image picker dialog.
 
-What automated testing *can't* cover here: actual mouse drag/wheel-zoom feel,
+What automated testing can't cover here: actual mouse drag/wheel-zoom feel,
 real file-drag-from-tab behavior, and cross-browser quirks (Safari/Firefox
-clipboard support in particular). That's the point of the local test pass
-above — flag anything that feels off and it can get fixed before this goes
-live.
+clipboard support in particular) — that's what your local/live test passes
+are for.
