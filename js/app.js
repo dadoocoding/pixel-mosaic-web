@@ -6,7 +6,7 @@
 import { rgbToHex, hexToRgb, contrastTextColor } from "./core/color.js";
 import { buildMonochromePalette } from "./core/quantize.js";
 import { imageToGrid } from "./core/grid.js";
-import { renderMosaic, renderBrickMosaic, estimateOutputDimensions } from "./core/render.js";
+import { renderMosaic, renderBrickMosaic, estimateOutputDimensions, renderPaintByNumber, renderColorKey } from "./core/render.js";
 import { hexHitTest } from "./core/shapes.js";
 import { splitIntoPanels } from "./core/panels.js";
 import { LEGO_BRICK_SIZES, footprintLabel } from "./core/bricks.js";
@@ -19,6 +19,14 @@ import {
 import { CanvasViewer } from "./ui/canvasViewer.js";
 
 const GRID_MAX_CELLS = 240;
+
+const SAMPLE_IMAGES = [
+  { file: "astronaut.jpg", title: "Astronaut", credit: "NASA \u2014 public domain" },
+  { file: "hubble_deep_field.jpg", title: "Hubble Deep Field", credit: "NASA \u2014 public domain" },
+  { file: "rocket.jpg", title: "Rocket Launch", credit: "SpaceX \u2014 public domain" },
+  { file: "coffee.jpg", title: "Coffee Cup", credit: "Rachel Michetti \u2014 CC0" },
+  { file: "horse.png", title: "Horse Silhouette", credit: "Andreas Preuss \u2014 CC0" },
+];
 
 // ---------------------------------------------------------------------------
 // State
@@ -58,6 +66,7 @@ const $ = (id) => document.getElementById(id);
 const el = {
   dropZone: $("dropZone"), dropLabel: $("dropLabel"),
   browseBtn: $("browseBtn"), pasteBtn: $("pasteBtn"), fileInput: $("fileInput"),
+  sampleImageBtn: $("sampleImageBtn"),
   gridWidth: $("gridWidth"), gridWidthVal: $("gridWidthVal"),
   gridHeight: $("gridHeight"), gridHeightVal: $("gridHeightVal"),
   lockAspect: $("lockAspect"), sizeEstimate: $("sizeEstimate"),
@@ -76,6 +85,7 @@ const el = {
   panelHeight: $("panelHeight"), panelHeightVal: $("panelHeightVal"),
   panelEstimate: $("panelEstimate"), exportPanelsBtn: $("exportPanelsBtn"),
   exportPngBtn: $("exportPngBtn"), exportJsonBtn: $("exportJsonBtn"), exportCsvBtn: $("exportCsvBtn"),
+  exportPaintByNumberBtn: $("exportPaintByNumberBtn"),
   viewToggle: $("viewToggle"),
   zoomInBtn: $("zoomInBtn"), zoomOutBtn: $("zoomOutBtn"), zoomFitBtn: $("zoomFitBtn"),
   previewCanvas: $("previewCanvas"),
@@ -209,7 +219,8 @@ function sampleOutputCell(x, y) {
   if (!rc) return;
   const [row, col] = rc;
   const rgb = state.quantizedGrid[row * gridW + col];
-  const bits = [`Row ${row}, Col ${col}`];
+  // 1-indexed for display -- there's no "row 0" on a physical build.
+  const bits = [`Row ${row + 1}, Col ${col + 1}`];
   const idx = paletteIndexFor(rgb);
   if (idx !== null) {
     bits.push(`Color #${idx + 1}`);
@@ -225,7 +236,8 @@ function sampleBrickCell(x, y) {
   const brick = state.brickLayout.find(b =>
     row >= b.row && row < b.row + b.height && col >= b.col && col < b.col + b.width);
   if (!brick) return;
-  const bits = [`Row ${brick.row}, Col ${brick.col}`, `${footprintLabel(brick.width, brick.height)} piece`];
+  // 1-indexed for display -- there's no "row 0" on a physical build.
+  const bits = [`Row ${brick.row + 1}, Col ${brick.col + 1}`, `${footprintLabel(brick.width, brick.height)} piece`];
   const idx = paletteIndexFor(brick.rgb);
   if (idx !== null) {
     bits.push(`Color #${idx + 1}`);
@@ -395,6 +407,61 @@ document.addEventListener("paste", async (e) => {
 });
 
 // ---------------------------------------------------------------------------
+// Sample images (bundled, public domain/CC0 -- for trying the tool with no
+// image of your own on hand)
+// ---------------------------------------------------------------------------
+
+el.sampleImageBtn.addEventListener("click", openSamplePicker);
+
+function openSamplePicker() {
+  const grid = document.createElement("div");
+  grid.className = "sample-grid";
+
+  SAMPLE_IMAGES.forEach((sample) => {
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "sample-tile";
+
+    const img = document.createElement("img");
+    img.src = `samples/${sample.file}`;
+    img.alt = sample.title;
+    img.loading = "lazy";
+
+    const caption = document.createElement("div");
+    caption.className = "sample-caption";
+    const title = document.createElement("div");
+    title.className = "sample-title";
+    title.textContent = sample.title;
+    const credit = document.createElement("div");
+    credit.className = "sample-credit";
+    credit.textContent = sample.credit;
+    caption.append(title, credit);
+
+    tile.append(img, caption);
+    tile.addEventListener("click", async () => {
+      closeDialog();
+      setStatus(`Loading ${sample.title}...`);
+      try {
+        const resp = await fetch(`samples/${sample.file}`);
+        const blob = await resp.blob();
+        await loadImageFromBlob(blob, sample.title);
+      } catch (err) {
+        setStatus(`Couldn't load sample image: ${err.message}`);
+      }
+    });
+
+    grid.appendChild(tile);
+  });
+
+  showDialog({
+    title: "Try a Sample Image",
+    desc: "A few public domain / CC0 images picked to show off different color ranges and detail levels \u2014 click one to load it.",
+    bodyEl: grid,
+    actions: [{ label: "Cancel", onClick: closeDialog }],
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Slider / control wiring
 // ---------------------------------------------------------------------------
 
@@ -414,7 +481,9 @@ function updateSizeEstimate() {
   const [w, h] = estimateOutputDimensions(gw, gh, state.shape, cellSize);
   const mp = (w * h) / 1e6;
   const mb = (w * h * 3) / 1e6;
-  let text = `Output image: ~${w.toLocaleString()}\u00d7${h.toLocaleString()}px (${mp.toFixed(0)}MP)`;
+  const totalCells = gw * gh;
+  let text = `Output image: ~${w.toLocaleString()}\u00d7${h.toLocaleString()}px (${mp.toFixed(0)}MP) `
+    + `\u2022 ${totalCells.toLocaleString()} total cells/tiles`;
   if (mb > 300) {
     text += "  \u26a0 large \u2014 generating will take a while";
     el.sizeEstimate.style.color = "#e0a030";
@@ -565,6 +634,7 @@ async function generateMosaic() {
     el.exportPngBtn.disabled = false;
     el.exportJsonBtn.disabled = false;
     el.exportCsvBtn.disabled = false;
+    el.exportPaintByNumberBtn.disabled = false;
     el.paletteBtn.disabled = false;
     el.exportPanelsBtn.disabled = false;
     updatePanelEstimate();
@@ -599,6 +669,7 @@ function disableGenerationDependentButtons() {
   el.exportPngBtn.disabled = true;
   el.exportJsonBtn.disabled = true;
   el.exportCsvBtn.disabled = true;
+  el.exportPaintByNumberBtn.disabled = true;
   el.paletteBtn.disabled = true;
   el.exportPanelsBtn.disabled = true;
   el.optimizeBricksBtn.disabled = true;
@@ -937,10 +1008,15 @@ async function exportPanels() {
 
     for (const p of panels) {
       const stem = `panel_r${p.panelRow + 1}_c${p.panelCol + 1}`;
+      // global_row_start/global_col_start are 1-indexed (matches the
+      // per-cell global_row/global_col below); global_row_end/
+      // global_col_end are the 0-indexed exclusive end (rowEnd - 1) which,
+      // written as-is, is already the correct 1-indexed *inclusive* last
+      // row/col -- so only the start needs the +1.
       const extraMeta = {
         panel_row: p.panelRow + 1, panel_col: p.panelCol + 1,
-        global_row_start: p.rowStart, global_row_end: p.rowEnd,
-        global_col_start: p.colStart, global_col_end: p.colEnd,
+        global_row_start: p.rowStart + 1, global_row_end: p.rowEnd,
+        global_col_start: p.colStart + 1, global_col_end: p.colEnd,
       };
       const json = buildGridJson(p.grid, p.width, p.height, state.palette, state.renderedShape, {
         sourceName: state.sourceFileName, names: state.colorNames,
@@ -962,8 +1038,8 @@ async function exportPanels() {
       panel_count: panels.length,
       panels: panels.map(p => ({
         panel_row: p.panelRow + 1, panel_col: p.panelCol + 1,
-        global_row_start: p.rowStart, global_row_end: p.rowEnd,
-        global_col_start: p.colStart, global_col_end: p.colEnd,
+        global_row_start: p.rowStart + 1, global_row_end: p.rowEnd,
+        global_col_start: p.colStart + 1, global_col_end: p.colEnd,
         width: p.width, height: p.height,
         json_file: `panel_r${p.panelRow + 1}_c${p.panelCol + 1}.json`,
         csv_file: `panel_r${p.panelRow + 1}_c${p.panelCol + 1}.csv`,
@@ -1009,6 +1085,32 @@ el.exportCsvBtn.addEventListener("click", () => {
     "mosaic_colors.csv", "text/csv");
   setStatus("Saved mosaic.csv and mosaic_colors.csv");
 });
+
+el.exportPaintByNumberBtn.addEventListener("click", exportPaintByNumber);
+
+function exportPaintByNumber() {
+  if (!state.quantizedGrid) return;
+  try {
+    const page1 = renderPaintByNumber(state.quantizedGrid, state.gridW, state.gridH,
+      state.palette, state.renderedShape, state.renderedCellSize, makeCanvas);
+    const counts = colorCounts(state.quantizedGrid, state.palette, state.colorNames);
+    const page2 = renderColorKey(state.palette, state.colorNames, counts, makeCanvas);
+
+    const doc = new jspdf.jsPDF({
+      unit: "px",
+      format: [page1.width, page1.height],
+      orientation: page1.width >= page1.height ? "landscape" : "portrait",
+    });
+    doc.addImage(page1.toDataURL("image/png"), "PNG", 0, 0, page1.width, page1.height);
+    doc.addPage([page2.width, page2.height], page2.width >= page2.height ? "landscape" : "portrait");
+    doc.addImage(page2.toDataURL("image/png"), "PNG", 0, 0, page2.width, page2.height);
+    doc.save("paint_by_number.pdf");
+    setStatus("Saved paint_by_number.pdf (2 pages)");
+  } catch (err) {
+    setStatus(`Error building paint-by-number PDF: ${err.message}`);
+    console.error(err);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Init
