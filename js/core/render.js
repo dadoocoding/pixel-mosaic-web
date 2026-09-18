@@ -10,6 +10,7 @@
  */
 
 import { hexCorners, estimateOutputDimensions } from "./shapes.js";
+import { rgbToHex, contrastTextColor } from "./color.js";
 
 export { estimateOutputDimensions };
 
@@ -96,5 +97,138 @@ export function renderBrickMosaic(bricks, cellSize, bgColor, createCanvasFn,
     ctx.strokeRect(x0 + outlineWidth / 2, y0 + outlineWidth / 2,
                     w - outlineWidth, h - outlineWidth);
   }
+  return canvas;
+}
+
+// ---------------------------------------------------------------------------
+// Paint-by-number rendering
+// ---------------------------------------------------------------------------
+// A printable alternative to the full-color render: page 1 shows an
+// outlined grid with every cell's palette-color *number* instead of its
+// actual color (so it can be printed in black & white and filled in by
+// hand); page 2 is the color key that explains what each number means.
+// Ported from mosaic_core.py's render_paint_by_number / render_color_key.
+
+/**
+ * Render page 1: an outlined grid where every cell shows the number of its
+ * palette color (1-indexed -- "Color #1", matching the numbering used
+ * everywhere else in the app) instead of the color itself. Uses the same
+ * square/circle/hexagon layout geometry as renderMosaic so the sheet lines
+ * up with the full-color render.
+ */
+export function renderPaintByNumber(quantizedGrid, gridW, gridH, palette, shape, cellSize,
+                                     createCanvasFn, options = {}) {
+  const { bgColor = [255, 255, 255], lineColor = [90, 90, 90], textColor = [20, 20, 20] } = options;
+  const [imgW, imgH] = estimateOutputDimensions(gridW, gridH, shape, cellSize);
+  const canvas = createCanvasFn(imgW, imgH);
+  const ctx = canvas.getContext("2d");
+
+  ctx.fillStyle = `rgb(${bgColor.join(",")})`;
+  ctx.fillRect(0, 0, imgW, imgH);
+  ctx.strokeStyle = `rgb(${lineColor.join(",")})`;
+  ctx.fillStyle = `rgb(${textColor.join(",")})`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const fontSize = Math.max(9, Math.round(cellSize * 0.42));
+  ctx.font = `bold ${fontSize}px sans-serif`;
+
+  const numberLookup = new Map(palette.map((rgb, i) => [rgbToHex(rgb), i + 1]));
+  const cellAt = (row, col) => quantizedGrid[row * gridW + col];
+
+  if (shape === "hexagon") {
+    const hexSize = cellSize * 0.58;
+    const hexW = Math.sqrt(3) * hexSize;
+    const hexH = 1.5 * hexSize;
+    ctx.lineWidth = 1.5;
+    for (let row = 0; row < gridH; row++) {
+      const rowOffset = row % 2 === 1 ? hexW / 2 : 0;
+      for (let col = 0; col < gridW; col++) {
+        const rgb = cellAt(row, col);
+        const cx = hexW * col + rowOffset + cellSize / 2;
+        const cy = hexH * row + cellSize / 2;
+        const corners = hexCorners(cx, cy, hexSize);
+        ctx.beginPath();
+        corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+        ctx.closePath();
+        ctx.stroke();
+        const number = numberLookup.get(rgbToHex(rgb));
+        if (number !== undefined) ctx.fillText(String(number), cx, cy);
+      }
+    }
+    return canvas;
+  }
+
+  // square & circle share a plain grid layout for the printable sheet too
+  ctx.lineWidth = 1;
+  for (let row = 0; row < gridH; row++) {
+    for (let col = 0; col < gridW; col++) {
+      const rgb = cellAt(row, col);
+      const x0 = col * cellSize, y0 = row * cellSize;
+      ctx.strokeRect(x0 + 0.5, y0 + 0.5, cellSize - 1, cellSize - 1);
+      const number = numberLookup.get(rgbToHex(rgb));
+      if (number !== undefined) ctx.fillText(String(number), x0 + cellSize / 2, y0 + cellSize / 2);
+    }
+  }
+  return canvas;
+}
+
+/**
+ * Render page 2: the color key/legend that explains what each number on
+ * page 1 means -- swatch, number, name (if any), hex code, and (when
+ * `counts` is given) how many cells use that color.
+ */
+export function renderColorKey(palette, names, counts, createCanvasFn, options = {}) {
+  const {
+    swatchSize = 50, bgColor = [255, 255, 255],
+    textColor = [20, 20, 20], lineColor = [210, 210, 210],
+  } = options;
+  const pad = 20;
+  const rowH = swatchSize + 14;
+  const imgW = 480;
+  const imgH = pad * 2 + 40 + rowH * palette.length;
+
+  const canvas = createCanvasFn(imgW, imgH);
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = `rgb(${bgColor.join(",")})`;
+  ctx.fillRect(0, 0, imgW, imgH);
+
+  ctx.fillStyle = `rgb(${textColor.join(",")})`;
+  ctx.font = "bold 22px sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText("Color Key", pad, pad + 22);
+
+  let y = pad + 40;
+  palette.forEach((rgb, i) => {
+    const x0 = pad, y0 = y;
+    ctx.fillStyle = `rgb(${rgb.join(",")})`;
+    ctx.fillRect(x0, y0, swatchSize, swatchSize);
+    ctx.strokeStyle = `rgb(${lineColor.join(",")})`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x0 + 0.5, y0 + 0.5, swatchSize - 1, swatchSize - 1);
+
+    ctx.fillStyle = contrastTextColor(rgb);
+    ctx.font = `bold ${Math.round(swatchSize * 0.4)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(i + 1), x0 + swatchSize / 2, y0 + swatchSize / 2);
+
+    const labelX = x0 + swatchSize + 16;
+    ctx.fillStyle = `rgb(${textColor.join(",")})`;
+    ctx.font = "16px sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    const name = names[i] || "";
+    ctx.fillText(name ? `#${i + 1}  ${name}` : `#${i + 1}`, labelX, y0 + 20);
+
+    ctx.fillStyle = "rgb(120,120,120)";
+    ctx.font = "13px sans-serif";
+    const bits = [rgbToHex(rgb)];
+    if (counts) bits.push(`${counts[i].count} cells`);
+    ctx.fillText(bits.join("  •  "), labelX, y0 + 40);
+
+    y += rowH;
+  });
+
   return canvas;
 }

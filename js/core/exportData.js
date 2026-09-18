@@ -33,15 +33,18 @@ export function buildGridJson(grid, gridW, gridH, palette, shape, options = {}) 
           includeGlobalCoords = false, extraMeta = null } = options;
   const nameLookup = buildNameLookup(palette, names);
 
+  // row/col are reported 1-indexed (row 1, col 1 = top-left) so they read
+  // naturally as a real-world build reference -- there's no "row 0" on a
+  // physical grid.
   const cells = [];
   for (let row = 0; row < gridH; row++) {
     for (let col = 0; col < gridW; col++) {
       const rgb = grid[row * gridW + col];
       const hex = rgbToHex(rgb);
-      const cell = { row, col, rgb, hex, name: nameLookup.get(hex) || "" };
+      const cell = { row: row + 1, col: col + 1, rgb, hex, name: nameLookup.get(hex) || "" };
       if (includeGlobalCoords) {
-        cell.global_row = row + rowOffset;
-        cell.global_col = col + colOffset;
+        cell.global_row = row + rowOffset + 1;
+        cell.global_col = col + colOffset + 1;
       }
       cells.push(cell);
     }
@@ -67,13 +70,15 @@ export function buildGridCsv(grid, gridW, gridH, palette = null, names = [], opt
   if (includeGlobalCoords) headers.push("global_row", "global_col");
   headers.push("r", "g", "b", "hex", "name");
 
+  // 1-indexed (row 1, col 1 = top-left) -- a real-world build reference has
+  // no "row 0".
   const rows = [];
   for (let row = 0; row < gridH; row++) {
     for (let col = 0; col < gridW; col++) {
       const [r, g, b] = grid[row * gridW + col];
       const hex = rgbToHex([r, g, b]);
-      const rowData = [row, col];
-      if (includeGlobalCoords) rowData.push(row + rowOffset, col + colOffset);
+      const rowData = [row + 1, col + 1];
+      if (includeGlobalCoords) rowData.push(row + rowOffset + 1, col + colOffset + 1);
       rowData.push(r, g, b, hex, nameLookup.get(hex) || "");
       rows.push(rowData);
     }
@@ -91,10 +96,11 @@ export function buildBricksJson(bricks, palette, shape, options = {}) {
   const { sourceName = "", names = [] } = options;
   const nameLookup = buildNameLookup(palette, names);
 
+  // 1-indexed -- a real-world build reference has no "row 0".
   const brickList = bricks.map(b => {
     const hex = rgbToHex(b.rgb);
     return {
-      row: b.row, col: b.col, width: b.width, height: b.height,
+      row: b.row + 1, col: b.col + 1, width: b.width, height: b.height,
       footprint: footprintLabel(b.width, b.height),
       rgb: b.rgb, hex, name: nameLookup.get(hex) || "",
     };
@@ -115,7 +121,7 @@ export function buildBricksCsv(bricks, palette = null, names = []) {
   const nameLookup = palette ? buildNameLookup(palette, names) : new Map();
   const rows = bricks.map(b => {
     const hex = rgbToHex(b.rgb);
-    return [b.row, b.col, b.width, b.height, footprintLabel(b.width, b.height),
+    return [b.row + 1, b.col + 1, b.width, b.height, footprintLabel(b.width, b.height),
             b.rgb[0], b.rgb[1], b.rgb[2], hex, nameLookup.get(hex) || ""];
   });
   return toCsv(["row", "col", "width", "height", "footprint", "r", "g", "b", "hex", "name"], rows);
