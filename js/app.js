@@ -24,6 +24,7 @@ import {
   buildAdaptiveTilesJson, buildAdaptiveShoppingListCsv, buildDiceShoppingListCsv,
 } from "./core/exportData.js";
 import { CanvasViewer } from "./ui/canvasViewer.js";
+import { nearestPaintMatchesAllBrands, formatBestMatch } from "./core/paintColors.js";
 
 const GRID_MAX_CELLS = 240;
 
@@ -106,7 +107,7 @@ const el = {
   shapeSeg: $("shapeSeg"),
   artisticStyle: $("artisticStyle"),
   edgeSensitivity: $("edgeSensitivity"), edgeSensitivityVal: $("edgeSensitivityVal"),
-  generateBtn: $("generateBtn"), paletteBtn: $("paletteBtn"),
+  generateBtn: $("generateBtn"), paletteBtn: $("paletteBtn"), sampleSheetBtn: $("sampleSheetBtn"),
   adaptiveSensitivity: $("adaptiveSensitivity"), adaptiveSensitivityVal: $("adaptiveSensitivityVal"),
   adaptiveGenerateBtn: $("adaptiveGenerateBtn"), exportAdaptiveTilesBtn: $("exportAdaptiveTilesBtn"),
   exportAdaptiveShoppingBtn: $("exportAdaptiveShoppingBtn"),
@@ -811,6 +812,7 @@ async function generateMosaic() {
     el.exportCsvBtn.disabled = false;
     el.exportPaintByNumberBtn.disabled = false;
     el.paletteBtn.disabled = false;
+    el.sampleSheetBtn.disabled = false;
     el.exportPanelsBtn.disabled = false;
     updatePanelEstimate();
 
@@ -846,6 +848,7 @@ function disableGenerationDependentButtons() {
   el.exportCsvBtn.disabled = true;
   el.exportPaintByNumberBtn.disabled = true;
   el.paletteBtn.disabled = true;
+  el.sampleSheetBtn.disabled = true;
   el.exportPanelsBtn.disabled = true;
   el.optimizeBricksBtn.disabled = true;
   el.exportAdaptiveTilesBtn.disabled = true;
@@ -1016,12 +1019,12 @@ el.exportDiceShoppingBtn.addEventListener("click", () => {
 // Dialog helper
 // ---------------------------------------------------------------------------
 
-function showDialog({ title, desc, bodyEl, actions }) {
+function showDialog({ title, desc, bodyEl, actions, wide = false }) {
   el.dialogRoot.innerHTML = "";
   const overlay = document.createElement("div");
   overlay.className = "dialog-overlay";
   const box = document.createElement("div");
-  box.className = "dialog-box";
+  box.className = wide ? "dialog-box wide" : "dialog-box";
 
   const h2 = document.createElement("h2");
   h2.textContent = title;
@@ -1126,6 +1129,145 @@ function editPaletteColor(idx, newRgb) {
     { artistic: state.artistic, edgeMask: state.edgeMask });
   if (state.viewMode === "output") refreshPreview(false);
   setStatus(`Updated Color #${idx + 1} to ${rgbToHex(newRgb)}.`);
+}
+
+// ---------------------------------------------------------------------------
+// Sample Sheet -- browse the palette, then hold a full-screen solid patch of
+// any color up against a paint chip in the store. The grid step reuses the
+// dialog system; the full-screen color view is a separate fixed overlay
+// (appended straight to <body>, above the dialog) so it can go true
+// edge-to-edge and isn't constrained by the dialog box's padding/width.
+// ---------------------------------------------------------------------------
+
+el.sampleSheetBtn.addEventListener("click", openSampleSheet);
+
+function openSampleSheet() {
+  if (!state.palette || !state.palette.length) return;
+
+  const matches = nearestPaintMatchesAllBrands(state.palette);
+  const body = document.createElement("div");
+  body.className = "sheet-grid";
+
+  state.palette.forEach((rgb, i) => {
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "sheet-swatch";
+
+    const swatch = document.createElement("div");
+    swatch.className = "sheet-swatch-color";
+    swatch.style.background = rgbToHex(rgb);
+
+    const label = document.createElement("div");
+    label.className = "sheet-swatch-label";
+    const nameEl = document.createElement("div");
+    nameEl.className = "sheet-swatch-name";
+    nameEl.textContent = state.colorNames[i] || `Color #${i + 1}`;
+    const hexEl = document.createElement("div");
+    hexEl.className = "sheet-swatch-hex";
+    hexEl.textContent = rgbToHex(rgb);
+    label.append(nameEl, hexEl);
+
+    tile.append(swatch, label);
+    tile.addEventListener("click", () => openSampleFullscreen(state.palette, state.colorNames, matches, i));
+    body.appendChild(tile);
+  });
+
+  showDialog({
+    title: "Sample Sheet",
+    desc: "Tap a color for a full-screen patch to hold up against paint chips in the store.",
+    bodyEl: body,
+    actions: [{ label: "Close", primary: true, onClick: closeDialog }],
+    wide: true,
+  });
+}
+
+function openSampleFullscreen(palette, names, matches, startIndex) {
+  let index = startIndex;
+
+  const overlay = document.createElement("div");
+  overlay.className = "sheet-fullscreen";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "sheet-close";
+  closeBtn.setAttribute("aria-label", "Close");
+  closeBtn.textContent = "×";
+  closeBtn.addEventListener("click", close);
+
+  const position = document.createElement("div");
+  position.className = "sheet-position";
+
+  const navLeft = document.createElement("div");
+  navLeft.className = "sheet-nav-zone left";
+  navLeft.addEventListener("click", () => step(-1));
+
+  const navRight = document.createElement("div");
+  navRight.className = "sheet-nav-zone right";
+  navRight.addEventListener("click", () => step(1));
+
+  const label = document.createElement("div");
+  label.className = "sheet-label";
+  label.addEventListener("click", () => label.classList.toggle("hidden"));
+
+  overlay.append(closeBtn, position, navLeft, navRight, label);
+  document.body.appendChild(overlay);
+
+  function render() {
+    const rgb = palette[index];
+    overlay.style.background = rgbToHex(rgb);
+    position.textContent = `${index + 1} / ${palette.length}`;
+
+    const nameText = names[index] || `Color #${index + 1}`;
+    const best = matches[index] && matches[index].best;
+    label.innerHTML = "";
+    const nameEl = document.createElement("div");
+    nameEl.className = "sheet-label-name";
+    nameEl.textContent = nameText;
+    const hexEl = document.createElement("div");
+    hexEl.className = "sheet-label-hex";
+    hexEl.textContent = rgbToHex(rgb);
+    label.append(nameEl, hexEl);
+    if (best) {
+      const matchEl = document.createElement("div");
+      matchEl.className = "sheet-label-match";
+      matchEl.textContent = `Nearest paint: ${formatBestMatch(best)}`;
+      label.appendChild(matchEl);
+    }
+  }
+
+  function step(dir) {
+    index = (index + dir + palette.length) % palette.length;
+    render();
+  }
+
+  function onKey(e) {
+    if (e.key === "Escape") close();
+    else if (e.key === "ArrowLeft") step(-1);
+    else if (e.key === "ArrowRight") step(1);
+  }
+
+  let touchStartX = null;
+  function onTouchStart(e) { touchStartX = e.touches[0].clientX; }
+  function onTouchEnd(e) {
+    if (touchStartX === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    touchStartX = null;
+    if (Math.abs(dx) < 40) return;
+    step(dx < 0 ? 1 : -1);
+  }
+
+  function close() {
+    document.removeEventListener("keydown", onKey);
+    overlay.removeEventListener("touchstart", onTouchStart);
+    overlay.removeEventListener("touchend", onTouchEnd);
+    overlay.remove();
+  }
+
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("touchstart", onTouchStart, { passive: true });
+  overlay.addEventListener("touchend", onTouchEnd, { passive: true });
+
+  render();
 }
 
 // ---------------------------------------------------------------------------

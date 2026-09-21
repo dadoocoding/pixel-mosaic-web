@@ -199,6 +199,30 @@ button.primary:hover:not(:disabled) { background: var(--accent-hover); }
   cursor: crosshair;
 }
 
+/* A real <img> mirroring the current preview, laid over the canvas. Canvas
+   elements don't get a native "Save Image"/"Add to Photos" long-press menu
+   on mobile, but an <img> does -- this overlay exists purely so that
+   long-press works. It stays click-through (pointer-events: none) on
+   desktop/mouse devices so it never interferes with the canvas's own zoom,
+   pan and click-to-sample handling; only touch-primary devices (no hover,
+   coarse pointer) make it interactive, and app.js forwards a plain tap on
+   it to the same sample-a-color handler the canvas uses. */
+#previewSaveOverlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  -webkit-touch-callout: default;
+}
+#previewSaveOverlay[hidden] { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  #previewSaveOverlay {
+    pointer-events: auto;
+  }
+}
+
 .sample-row {
   display: flex;
   align-items: center;
@@ -359,3 +383,104 @@ button.primary:hover:not(:disabled) { background: var(--accent-hover); }
   #panel { width: 100%; min-width: 0; height: 45vh; border-right: none; border-bottom: 1px solid var(--border); }
   #previewPane { height: 55vh; }
 }
+
+/* ---- Sample Sheet (paint-aisle color matching) ---- */
+.dialog-box.wide { width: 620px; }
+
+.sheet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 10px;
+}
+.sheet-swatch {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  background: var(--btn-bg);
+}
+.sheet-swatch:hover { border-color: var(--accent); }
+.sheet-swatch .sheet-swatch-color {
+  height: 56px;
+  border-bottom: 1px solid var(--border);
+}
+.sheet-swatch .sheet-swatch-label {
+  padding: 5px 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text);
+}
+.sheet-swatch .sheet-swatch-label .sheet-swatch-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sheet-swatch .sheet-swatch-label .sheet-swatch-hex {
+  color: var(--text-dim);
+  font-family: monospace;
+}
+
+.sheet-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  touch-action: pan-y;
+  user-select: none;
+}
+.sheet-fullscreen .sheet-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+}
+.sheet-fullscreen .sheet-position {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  padding: 6px 10px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 11.5px;
+  z-index: 2;
+}
+.sheet-fullscreen .sheet-nav-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 30%;
+  cursor: pointer;
+}
+.sheet-fullscreen .sheet-nav-zone.left { left: 0; }
+.sheet-fullscreen .sheet-nav-zone.right { right: 0; }
+.sheet-fullscreen .sheet-label {
+  position: relative;
+  z-index: 1;
+  margin: 0 14px 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.sheet-fullscreen .sheet-label.hidden { display: none; }
+.sheet-fullscreen .sheet-label .sheet-label-name { font-weight: 600; }
+.sheet-fullscreen .sheet-label .sheet-label-hex { opacity: 0.85; font-family: monospace; }
+.sheet-fullscreen .sheet-label .sheet-label-match { opacity: 0.85; margin-top: 2px; }
