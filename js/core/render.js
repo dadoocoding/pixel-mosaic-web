@@ -14,7 +14,20 @@ import { rgbToHex, contrastTextColor } from "./color.js";
 
 export { estimateOutputDimensions };
 
-export function renderMosaic(quantizedGrid, gridW, gridH, shape, cellSize, bgColor, createCanvasFn) {
+/**
+ * options.artistic (default false): when true, draws a thin grid line
+ * around every cell and renders any cell marked 1 in options.edgeMask (see
+ * edges.js's computeEdgeMask) as a solid outlineColor cell instead of its
+ * quantized color -- tracing detected edges the way a hand-drawn pixel-art
+ * piece would. edgeMask is a flat Uint8Array of length gridW*gridH,
+ * row-major (same layout as quantizedGrid).
+ */
+export function renderMosaic(quantizedGrid, gridW, gridH, shape, cellSize, bgColor, createCanvasFn,
+                              options = {}) {
+  const {
+    artistic = false, edgeMask = null,
+    gridLineColor = [30, 30, 30], outlineColor = [10, 10, 10],
+  } = options;
   const [imgW, imgH] = estimateOutputDimensions(gridW, gridH, shape, cellSize);
   const canvas = createCanvasFn(imgW, imgH);
   const ctx = canvas.getContext("2d");
@@ -23,15 +36,23 @@ export function renderMosaic(quantizedGrid, gridW, gridH, shape, cellSize, bgCol
   ctx.fillRect(0, 0, imgW, imgH);
 
   const cellAt = (row, col) => quantizedGrid[row * gridW + col];
+  const cellFill = (row, col) => {
+    if (artistic && edgeMask && edgeMask[row * gridW + col]) return outlineColor;
+    return cellAt(row, col);
+  };
 
   if (shape === "hexagon") {
     const hexSize = cellSize * 0.58;
     const hexW = Math.sqrt(3) * hexSize;
     const hexH = 1.5 * hexSize;
+    if (artistic) {
+      ctx.strokeStyle = `rgb(${gridLineColor.join(",")})`;
+      ctx.lineWidth = 1;
+    }
     for (let row = 0; row < gridH; row++) {
       const rowOffset = row % 2 === 1 ? hexW / 2 : 0;
       for (let col = 0; col < gridW; col++) {
-        const [r, g, b] = cellAt(row, col);
+        const [r, g, b] = cellFill(row, col);
         const cx = hexW * col + rowOffset + cellSize / 2;
         const cy = hexH * row + cellSize / 2;
         const corners = hexCorners(cx, cy, hexSize);
@@ -40,14 +61,19 @@ export function renderMosaic(quantizedGrid, gridW, gridH, shape, cellSize, bgCol
         corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
         ctx.closePath();
         ctx.fill();
+        if (artistic) ctx.stroke();
       }
     }
     return canvas;
   }
 
+  if (artistic) {
+    ctx.strokeStyle = `rgb(${gridLineColor.join(",")})`;
+    ctx.lineWidth = 1;
+  }
   for (let row = 0; row < gridH; row++) {
     for (let col = 0; col < gridW; col++) {
-      const [r, g, b] = cellAt(row, col);
+      const [r, g, b] = cellFill(row, col);
       const x0 = col * cellSize, y0 = row * cellSize;
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       if (shape === "circle") {
@@ -56,8 +82,10 @@ export function renderMosaic(quantizedGrid, gridW, gridH, shape, cellSize, bgCol
         ctx.ellipse(x0 + cellSize / 2, y0 + cellSize / 2,
                      cellSize / 2 - pad, cellSize / 2 - pad, 0, 0, Math.PI * 2);
         ctx.fill();
+        if (artistic) ctx.stroke();
       } else {
         ctx.fillRect(x0, y0, cellSize, cellSize);
+        if (artistic) ctx.strokeRect(x0 + 0.5, y0 + 0.5, cellSize - 1, cellSize - 1);
       }
     }
   }
