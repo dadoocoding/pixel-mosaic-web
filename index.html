@@ -35,61 +35,107 @@
     <label class="checkbox-label"><input type="checkbox" id="lockAspect" checked> Lock aspect ratio to source image</label>
     <p class="hint" id="sizeEstimate"></p>
 
-    <label>Color source</label>
-    <div class="segmented" id="colorSourceSeg">
-      <button data-mode="auto" class="active" type="button">Auto (K-Means)</button>
-      <button data-mode="fixed" type="button">Fixed Palette</button>
-      <button data-mode="monochrome" type="button">Monochrome</button>
-    </div>
-
-    <label for="numColors" id="colorsLabel">Number of colors (0 = auto)</label>
-    <div class="slider-row"><input type="range" id="numColors" min="0" max="64" value="0"><span class="slider-val" id="numColorsVal">0</span></div>
-
-    <p class="hint" id="fixedPaletteLabel">No palette chosen</p>
-    <div class="button-row"><button id="choosePaletteBtn" disabled>Choose Fixed Palette...</button></div>
-
-    <label>Monochrome base color</label>
-    <button id="monoColorBtn" class="color-swatch-btn" disabled>#2846aa</button>
-    <input type="color" id="monoColorPicker" value="#2846aa" hidden>
-
+    <!-- Cell size & background color -- shared by all 3 layout modes. Grid
+         width/height above are shared too: for Adaptive they're the finest
+         possible tile resolution; for Dice they're the die grid. -->
     <label for="cellSize">Cell size (output px per cell)</label>
     <div class="slider-row"><input type="range" id="cellSize" min="10" max="90" value="36"><span class="slider-val" id="cellSizeVal">36</span></div>
 
-    <label>Tile shape</label>
-    <div class="segmented" id="shapeSeg">
-      <button data-shape="square" class="active" type="button">Square</button>
-      <button data-shape="circle" type="button">Circle</button>
-      <button data-shape="hexagon" type="button">Hexagon</button>
-    </div>
-
-    <label>Background color <span class="hint-inline">(shows in circle/hexagon gaps)</span></label>
+    <label>Background color <span class="hint-inline">(shows in shape/tile gaps)</span></label>
     <button id="bgColorBtn" class="color-swatch-btn">#121214</button>
     <input type="color" id="bgColorPicker" value="#121214" hidden>
 
-    <div class="button-row"><button id="generateBtn" class="primary" disabled>Generate Mosaic</button></div>
+    <!-- Layout mode -->
+    <label>Layout</label>
+    <div class="segmented" id="layoutModeSeg">
+      <button data-layout="classic" class="active" type="button">Classic Grid</button>
+      <button data-layout="adaptive" type="button">Adaptive</button>
+      <button data-layout="dice" type="button">Dice</button>
+    </div>
 
-    <div class="button-row"><button id="paletteBtn" disabled>Edit Color Palette...</button></div>
+    <div id="classicPanel">
+      <label>Color source</label>
+      <div class="segmented" id="colorSourceSeg">
+        <button data-mode="auto" class="active" type="button">Auto (K-Means)</button>
+        <button data-mode="fixed" type="button">Fixed Palette</button>
+        <button data-mode="monochrome" type="button">Monochrome</button>
+      </div>
 
-    <label>Brick optimization <span class="hint-inline">(Square shape only)</span></label>
-    <div class="button-row"><button id="optimizeBricksBtn" disabled>Optimize Into Bricks...</button></div>
-    <p class="hint" id="brickSummary"></p>
-    <div class="button-row"><button id="exportBricksJsonBtn" disabled>Save Brick List (JSON)</button></div>
-    <div class="button-row"><button id="exportBricksCsvBtn" disabled>Save Brick List (CSV)</button></div>
-    <div class="button-row"><button id="exportShoppingListBtn" disabled>Save Shopping List (CSV)</button></div>
+      <label for="numColors" id="colorsLabel">Number of colors (0 = auto)</label>
+      <div class="slider-row"><input type="range" id="numColors" min="0" max="64" value="0"><span class="slider-val" id="numColorsVal">0</span></div>
 
-    <label>Sub-structures <span class="hint-inline">(split output into build-able sections)</span></label>
-    <label for="panelWidth" class="sub-label">Panel width (cells)</label>
-    <div class="slider-row"><input type="range" id="panelWidth" min="2" max="240" value="20"><span class="slider-val" id="panelWidthVal">20</span></div>
-    <label for="panelHeight" class="sub-label">Panel height (cells)</label>
-    <div class="slider-row"><input type="range" id="panelHeight" min="2" max="240" value="20"><span class="slider-val" id="panelHeightVal">20</span></div>
-    <p class="hint" id="panelEstimate"></p>
-    <div class="button-row"><button id="exportPanelsBtn" disabled>Export Panels (.zip)</button></div>
+      <p class="hint" id="fixedPaletteLabel">No palette chosen</p>
+      <div class="button-row"><button id="choosePaletteBtn" disabled>Choose Fixed Palette...</button></div>
 
-    <label>Export</label>
+      <label>Monochrome base color</label>
+      <button id="monoColorBtn" class="color-swatch-btn" disabled>#2846aa</button>
+      <input type="color" id="monoColorPicker" value="#2846aa" hidden>
+
+      <label>Tile shape</label>
+      <div class="segmented" id="shapeSeg">
+        <button data-shape="square" class="active" type="button">Square</button>
+        <button data-shape="circle" type="button">Circle</button>
+        <button data-shape="hexagon" type="button">Hexagon</button>
+      </div>
+
+      <label class="checkbox-label"><input type="checkbox" id="artisticStyle"> Artistic style (grid lines + edge outlines)</label>
+      <label for="edgeSensitivity" class="sub-label">Edge sensitivity (higher = more outlining)</label>
+      <div class="slider-row"><input type="range" id="edgeSensitivity" min="0" max="100" value="55"><span class="slider-val" id="edgeSensitivityVal">55</span></div>
+
+      <div class="button-row"><button id="generateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <div class="button-row"><button id="paletteBtn" disabled>Edit Color Palette...</button></div>
+
+      <label>Brick optimization <span class="hint-inline">(Square shape only)</span></label>
+      <div class="button-row"><button id="optimizeBricksBtn" disabled>Optimize Into Bricks...</button></div>
+      <p class="hint" id="brickSummary"></p>
+      <div class="button-row"><button id="exportBricksJsonBtn" disabled>Save Brick List (JSON)</button></div>
+      <div class="button-row"><button id="exportBricksCsvBtn" disabled>Save Brick List (CSV)</button></div>
+      <div class="button-row"><button id="exportShoppingListBtn" disabled>Save Shopping List (CSV)</button></div>
+
+      <label>Sub-structures <span class="hint-inline">(split output into build-able sections)</span></label>
+      <label for="panelWidth" class="sub-label">Panel width (cells)</label>
+      <div class="slider-row"><input type="range" id="panelWidth" min="2" max="240" value="20"><span class="slider-val" id="panelWidthVal">20</span></div>
+      <label for="panelHeight" class="sub-label">Panel height (cells)</label>
+      <div class="slider-row"><input type="range" id="panelHeight" min="2" max="240" value="20"><span class="slider-val" id="panelHeightVal">20</span></div>
+      <p class="hint" id="panelEstimate"></p>
+      <div class="button-row"><button id="exportPanelsBtn" disabled>Export Panels (.zip)</button></div>
+
+      <label>Export</label>
+      <div class="button-row"><button id="exportJsonBtn" disabled>Save Grid Data (JSON)</button></div>
+      <div class="button-row"><button id="exportCsvBtn" disabled>Save Grid Data (CSV)</button></div>
+      <div class="button-row"><button id="exportPaintByNumberBtn" disabled>Save Paint-by-Number (PDF)</button></div>
+    </div>
+
+    <div id="adaptivePanel" hidden>
+      <label for="adaptiveSensitivity">Detail sensitivity <span class="hint-inline">(higher = more/smaller tiles)</span></label>
+      <div class="slider-row"><input type="range" id="adaptiveSensitivity" min="0" max="100" value="55"><span class="slider-val" id="adaptiveSensitivityVal">55</span></div>
+
+      <div class="button-row"><button id="adaptiveGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <label>Export</label>
+      <div class="button-row"><button id="exportAdaptiveTilesBtn" disabled>Save Tile List (JSON)</button></div>
+    </div>
+
+    <div id="dicePanel" hidden>
+      <label>Die color</label>
+      <button id="dieColorBtn" class="color-swatch-btn">#141418</button>
+      <input type="color" id="dieColorPicker" value="#141418" hidden>
+
+      <label>Pip color</label>
+      <button id="pipColorBtn" class="color-swatch-btn">#ebebeb</button>
+      <input type="color" id="pipColorPicker" value="#ebebeb" hidden>
+
+      <div class="button-row"><button id="diceGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <label>Export</label>
+      <div class="button-row"><button id="exportDiceGuideBtn" disabled>Save Dice Build Guide (PDF)</button></div>
+      <div class="button-row"><button id="exportDiceShoppingBtn" disabled>Save Dice Shopping List (CSV)</button></div>
+    </div>
+
+    <!-- Save Image (PNG) -- shared by all 3 layout modes, always sits right
+         below whichever panel above is currently shown -->
     <div class="button-row"><button id="exportPngBtn" disabled>Save Image (PNG)</button></div>
-    <div class="button-row"><button id="exportJsonBtn" disabled>Save Grid Data (JSON)</button></div>
-    <div class="button-row"><button id="exportCsvBtn" disabled>Save Grid Data (CSV)</button></div>
-    <div class="button-row"><button id="exportPaintByNumberBtn" disabled>Save Paint-by-Number (PDF)</button></div>
 
     <p class="footer-note">Pixel Mosaic &mdash; Dadoo Labs</p>
   </aside>
@@ -108,7 +154,7 @@
       </div>
     </div>
 
-    <div id="canvasWrap"><canvas id="previewCanvas"></canvas></div>
+    <div id="canvasWrap"><canvas id="previewCanvas"></canvas><img id="previewSaveOverlay" alt="" hidden></div>
 
     <div class="sample-row">
       <div id="sampleSwatch" class="swatch"></div>
