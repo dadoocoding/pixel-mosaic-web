@@ -8,13 +8,20 @@ import { buildMonochromePalette } from "./core/quantize.js";
 import { imageToGrid } from "./core/grid.js";
 import { renderMosaic, renderBrickMosaic, estimateOutputDimensions, renderPaintByNumber, renderColorKey } from "./core/render.js";
 import { hexHitTest } from "./core/shapes.js";
+import { computeEdgeMask } from "./core/edges.js";
 import { splitIntoPanels } from "./core/panels.js";
 import { LEGO_BRICK_SIZES, footprintLabel } from "./core/bricks.js";
 import { colorCounts } from "./core/colorCounts.js";
 import { LEGO_SOLID_COLORS, parsePaletteFile } from "./core/palettes.js";
+import { buildQuadtree, renderAdaptiveMosaic } from "./core/adaptive.js";
+import {
+  imageToGrayGrid, stretchToRange, ditherToPips, pipLevelBrightness,
+  renderDiceMosaic, renderDiceKey,
+} from "./core/dice.js";
 import {
   buildGridJson, buildGridCsv, buildPaletteCsv,
   buildBricksJson, buildBricksCsv, buildShoppingListCsv,
+  buildAdaptiveTilesJson, buildAdaptiveShoppingListCsv, buildDiceShoppingListCsv,
 } from "./core/exportData.js";
 import { CanvasViewer } from "./ui/canvasViewer.js";
 
@@ -49,10 +56,28 @@ const state = {
   fixedPalette: null,
   fixedPaletteNames: null,
   shape: "square",
+  artistic: false,
+  edgeSensitivity: 55,
+  edgeMask: null,
   brickLayout: null,
   brickCanvas: null,
   sampledHex: null,
   viewMode: "source",
+
+  // Layout mode (Classic Grid / Adaptive / Dice) -- see _on_layout_mode_change
+  // in the desktop app for the equivalent. renderedMode tracks what's
+  // actually on screen right now (kept separate from layoutMode, the
+  // currently-selected tab, so switching tabs without regenerating doesn't
+  // change what a background-color/die-color tweak re-renders).
+  layoutMode: "classic",
+  renderedMode: "classic",
+  renderedGridW: 40,
+  renderedGridH: 40,
+  adaptiveSensitivity: 55,
+  adaptiveLeaves: null,
+  dieColor: [20, 20, 24],
+  pipColor: [235, 235, 235],
+  dicePipGrid: null,
 };
 
 const brickSizeSelections = new Map(LEGO_BRICK_SIZES.map(([w, h]) => [`${w}x${h}`, true]));
@@ -70,14 +95,25 @@ const el = {
   gridWidth: $("gridWidth"), gridWidthVal: $("gridWidthVal"),
   gridHeight: $("gridHeight"), gridHeightVal: $("gridHeightVal"),
   lockAspect: $("lockAspect"), sizeEstimate: $("sizeEstimate"),
+  cellSize: $("cellSize"), cellSizeVal: $("cellSizeVal"),
+  bgColorBtn: $("bgColorBtn"), bgColorPicker: $("bgColorPicker"),
+  layoutModeSeg: $("layoutModeSeg"),
+  classicPanel: $("classicPanel"), adaptivePanel: $("adaptivePanel"), dicePanel: $("dicePanel"),
   colorSourceSeg: $("colorSourceSeg"), colorsLabel: $("colorsLabel"),
   numColors: $("numColors"), numColorsVal: $("numColorsVal"),
   fixedPaletteLabel: $("fixedPaletteLabel"), choosePaletteBtn: $("choosePaletteBtn"),
   monoColorBtn: $("monoColorBtn"), monoColorPicker: $("monoColorPicker"),
-  cellSize: $("cellSize"), cellSizeVal: $("cellSizeVal"),
   shapeSeg: $("shapeSeg"),
-  bgColorBtn: $("bgColorBtn"), bgColorPicker: $("bgColorPicker"),
+  artisticStyle: $("artisticStyle"),
+  edgeSensitivity: $("edgeSensitivity"), edgeSensitivityVal: $("edgeSensitivityVal"),
   generateBtn: $("generateBtn"), paletteBtn: $("paletteBtn"),
+  adaptiveSensitivity: $("adaptiveSensitivity"), adaptiveSensitivityVal: $("adaptiveSensitivityVal"),
+  adaptiveGenerateBtn: $("adaptiveGenerateBtn"), exportAdaptiveTilesBtn: $("exportAdaptiveTilesBtn"),
+  exportAdaptiveShoppingBtn: $("exportAdaptiveShoppingBtn"),
+  dieColorBtn: $("dieColorBtn"), dieColorPicker: $("dieColorPicker"),
+  pipColorBtn: $("pipColorBtn"), pipColorPicker: $("pipColorPicker"),
+  diceGenerateBtn: $("diceGenerateBtn"),
+  exportDiceGuideBtn: $("exportDiceGuideBtn"), exportDiceShoppingBtn: $("exportDiceShoppingBtn"),
   optimizeBricksBtn: $("optimizeBricksBtn"), brickSummary: $("brickSummary"),
   exportBricksJsonBtn: $("exportBricksJsonBtn"), exportBricksCsvBtn: $("exportBricksCsvBtn"),
   exportShoppingListBtn: $("exportShoppingListBtn"),
@@ -88,7 +124,7 @@ const el = {
   exportPaintByNumberBtn: $("exportPaintByNumberBtn"),
   viewToggle: $("viewToggle"),
   zoomInBtn: $("zoomInBtn"), zoomOutBtn: $("zoomOutBtn"), zoomFitBtn: $("zoomFitBtn"),
-  previewCanvas: $("previewCanvas"),
+  previewCanvas: $("previewCanvas"), previewSaveOverlay: $("previewSaveOverlay"),
   sampleSwatch: $("sampleSwatch"), sampleInfo: $("sampleInfo"), copyHexBtn: $("copyHexBtn"),
   statusLine: $("statusLine"),
   dialogRoot: $("dialogRoot"),
@@ -158,19 +194,79 @@ function setSwatchButton(btn, rgb) {
 const viewer = new CanvasViewer(el.previewCanvas, { onClick: onCanvasClick });
 
 function refreshPreview(resetView = true) {
+  let shown = null;
   if (state.viewMode === "source") {
-    state.sourceCanvas
-      ? viewer.setImage(state.sourceCanvas, { resetView })
-      : viewer.showPlaceholder("Load an image to get started");
+    if (state.sourceCanvas) { viewer.setImage(state.sourceCanvas, { resetView }); shown = state.sourceCanvas; }
+    else viewer.showPlaceholder("Load an image to get started");
   } else if (state.viewMode === "bricks") {
-    state.brickCanvas
-      ? viewer.setImage(state.brickCanvas, { resetView })
-      : viewer.showPlaceholder("Optimize into bricks first (see the left panel)");
+    if (state.brickCanvas) { viewer.setImage(state.brickCanvas, { resetView }); shown = state.brickCanvas; }
+    else viewer.showPlaceholder("Optimize into bricks first (see the left panel)");
   } else {
-    state.outputCanvas
-      ? viewer.setImage(state.outputCanvas, { resetView })
-      : viewer.showPlaceholder("Generate a mosaic to see the output here");
+    if (state.outputCanvas) { viewer.setImage(state.outputCanvas, { resetView }); shown = state.outputCanvas; }
+    else viewer.showPlaceholder("Generate a mosaic to see the output here");
   }
+  updateSaveOverlay(shown);
+}
+
+// Mirrors whatever's currently shown into a real <img> (see the CSS
+// comment on #previewSaveOverlay) so mobile browsers offer a native
+// "Save Image" / "Add to Photos" long-press menu, which canvas elements
+// never get. Only needs refreshing when the shown canvas's content
+// actually changes (generate, view toggle, bg-color/palette edits, brick
+// optimize) -- not on every pan/zoom frame, since the overlay always shows
+// the full, un-cropped image regardless of the canvas's current zoom.
+function updateSaveOverlay(canvasEl) {
+  if (!canvasEl) {
+    el.previewSaveOverlay.hidden = true;
+    el.previewSaveOverlay.removeAttribute("src");
+    return;
+  }
+  try {
+    el.previewSaveOverlay.src = canvasEl.toDataURL("image/png");
+    el.previewSaveOverlay.hidden = false;
+  } catch (err) {
+    // Defensive only -- every canvas here is drawn from same-origin/local
+    // or CORS-fetched-as-blob image data, so this shouldn't actually taint,
+    // but never let a save-overlay hiccup break the rest of the preview.
+    el.previewSaveOverlay.hidden = true;
+    console.warn("Couldn't update mobile save overlay:", err);
+  }
+}
+
+// On touch-primary devices the overlay intercepts taps (see the CSS media
+// query), so forward a plain tap (not a drag, not a long-press) to the
+// same sample-a-color handler the canvas's own click uses. Coordinates are
+// mapped through the overlay's object-fit:contain box since the overlay
+// always shows the full image regardless of the canvas's zoom/pan state.
+let overlayTapStart = null;
+el.previewSaveOverlay.addEventListener("pointerdown", (e) => {
+  overlayTapStart = { x: e.clientX, y: e.clientY, t: Date.now() };
+});
+el.previewSaveOverlay.addEventListener("pointerup", (e) => {
+  if (!overlayTapStart) return;
+  const { x, y, t } = overlayTapStart;
+  overlayTapStart = null;
+  const dx = e.clientX - x, dy = e.clientY - y;
+  // A long-press (the OS's save-image gesture) or a drag shouldn't also
+  // fire a sample click -- only a quick, mostly-stationary tap does.
+  if (Math.hypot(dx, dy) > 8 || Date.now() - t > 600) return;
+  const coords = overlayTapToImageCoords(e.clientX, e.clientY);
+  if (coords) onCanvasClick(coords[0], coords[1]);
+});
+
+function overlayTapToImageCoords(clientX, clientY) {
+  const img = el.previewSaveOverlay;
+  const rect = img.getBoundingClientRect();
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  if (!iw || !ih || rect.width === 0 || rect.height === 0) return null;
+  const scale = Math.min(rect.width / iw, rect.height / ih);
+  const dispW = iw * scale, dispH = ih * scale;
+  const offsetX = (rect.width - dispW) / 2;
+  const offsetY = (rect.height - dispH) / 2;
+  const localX = clientX - rect.left - offsetX;
+  const localY = clientY - rect.top - offsetY;
+  if (localX < 0 || localY < 0 || localX >= dispW || localY >= dispH) return null;
+  return [localX / scale, localY / scale];
 }
 
 function setViewMode(mode) {
@@ -324,9 +420,15 @@ function applyLoadedImage(canvas, displayName) {
   state.palette = null;
   state.colorNames = [];
   state.outputCanvas = null;
+  state.edgeMask = null;
+  state.adaptiveLeaves = null;
+  state.dicePipGrid = null;
+  state.renderedMode = state.layoutMode;
   clearBrickLayout();
   disableGenerationDependentButtons();
   el.generateBtn.disabled = false;
+  el.adaptiveGenerateBtn.disabled = false;
+  el.diceGenerateBtn.disabled = false;
   resetSampleDisplay();
 
   if (el.lockAspect.checked) syncHeightToAspect();
@@ -550,21 +652,85 @@ el.shapeSeg.addEventListener("click", (e) => {
   updateSizeEstimate();
 });
 
+// ---------------------------------------------------------------------------
+// Re-render (no re-quantize/re-split/re-dither) whatever mode is currently
+// on screen -- for tweaks that only affect the render, not the underlying
+// pipeline (background color always; die/pip color only affects how a face
+// is drawn, not the dithered pattern itself, which is fixed by the source
+// image + grid). Mirrors the desktop app's _rerender_current. No-ops if
+// nothing's been generated yet in the currently-*rendered* mode (which can
+// briefly differ from the selected Layout tab -- see state.renderedMode).
+// ---------------------------------------------------------------------------
+
+function rerenderCurrent(resetView = true) {
+  if (state.renderedMode === "classic" && state.quantizedGrid) {
+    state.outputCanvas = renderMosaic(state.quantizedGrid, state.renderedGridW, state.renderedGridH,
+      state.renderedShape, state.renderedCellSize, state.bgColor, makeCanvas,
+      { artistic: state.artistic, edgeMask: state.edgeMask });
+    if (state.viewMode === "output") refreshPreview(resetView);
+  } else if (state.renderedMode === "adaptive" && state.adaptiveLeaves) {
+    state.outputCanvas = renderAdaptiveMosaic(state.adaptiveLeaves, state.renderedGridW, state.renderedGridH,
+      state.renderedCellSize, state.bgColor, makeCanvas);
+    if (state.viewMode === "output") refreshPreview(resetView);
+  } else if (state.renderedMode === "dice" && state.dicePipGrid) {
+    state.outputCanvas = renderDiceMosaic(state.dicePipGrid, state.renderedGridW, state.renderedGridH,
+      state.renderedCellSize, state.dieColor, state.pipColor, state.bgColor, makeCanvas);
+    if (state.viewMode === "output") refreshPreview(resetView);
+  }
+}
+
 el.bgColorBtn.addEventListener("click", () => el.bgColorPicker.click());
 el.bgColorPicker.addEventListener("input", () => {
   state.bgColor = hexToRgb(el.bgColorPicker.value);
   setSwatchButton(el.bgColorBtn, state.bgColor);
-  if (state.quantizedGrid) {
-    state.outputCanvas = renderMosaic(state.quantizedGrid, state.gridW, state.gridH,
-      state.renderedShape, state.renderedCellSize, state.bgColor, makeCanvas);
-    if (state.viewMode === "output") refreshPreview(false);
-  }
+  rerenderCurrent(false);
+});
+
+// ---------------------------------------------------------------------------
+// Layout mode (Classic Grid / Adaptive / Dice)
+// ---------------------------------------------------------------------------
+
+el.layoutModeSeg.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-layout]");
+  if (!btn) return;
+  [...el.layoutModeSeg.children].forEach(b => b.classList.toggle("active", b === btn));
+  state.layoutMode = btn.dataset.layout;
+  el.classicPanel.hidden = state.layoutMode !== "classic";
+  el.adaptivePanel.hidden = state.layoutMode !== "adaptive";
+  el.dicePanel.hidden = state.layoutMode !== "dice";
+});
+
+el.artisticStyle.addEventListener("change", () => {
+  state.artistic = el.artisticStyle.checked;
+});
+el.edgeSensitivity.addEventListener("input", () => {
+  el.edgeSensitivityVal.textContent = el.edgeSensitivity.value;
+  state.edgeSensitivity = parseInt(el.edgeSensitivity.value, 10);
 });
 
 el.monoColorBtn.addEventListener("click", () => el.monoColorPicker.click());
 el.monoColorPicker.addEventListener("input", () => {
   state.monochromeBaseColor = hexToRgb(el.monoColorPicker.value);
   setSwatchButton(el.monoColorBtn, state.monochromeBaseColor);
+});
+
+el.adaptiveSensitivity.addEventListener("input", () => {
+  el.adaptiveSensitivityVal.textContent = el.adaptiveSensitivity.value;
+  state.adaptiveSensitivity = parseInt(el.adaptiveSensitivity.value, 10);
+});
+
+el.dieColorBtn.addEventListener("click", () => el.dieColorPicker.click());
+el.dieColorPicker.addEventListener("input", () => {
+  state.dieColor = hexToRgb(el.dieColorPicker.value);
+  setSwatchButton(el.dieColorBtn, state.dieColor);
+  rerenderCurrent(false);
+});
+
+el.pipColorBtn.addEventListener("click", () => el.pipColorPicker.click());
+el.pipColorPicker.addEventListener("input", () => {
+  state.pipColor = hexToRgb(el.pipColorPicker.value);
+  setSwatchButton(el.pipColorBtn, state.pipColor);
+  rerenderCurrent(false);
 });
 
 // ---------------------------------------------------------------------------
@@ -619,7 +785,12 @@ async function generateMosaic() {
       names = null;
     }
 
-    const outputCanvas = renderMosaic(quantizedFlat, gridW, gridH, shape, cellSize, bgColor, makeCanvas);
+    const artistic = state.artistic;
+    const edgeMask = artistic
+      ? computeEdgeMask(state.sourceCanvas, gridW, gridH, state.edgeSensitivity)
+      : null;
+    const outputCanvas = renderMosaic(quantizedFlat, gridW, gridH, shape, cellSize, bgColor, makeCanvas,
+      { artistic, edgeMask });
 
     state.gridW = gridW;
     state.gridH = gridH;
@@ -628,7 +799,11 @@ async function generateMosaic() {
     state.colorNames = names ? [...names] : palette.map(() => "");
     state.renderedShape = shape;
     state.renderedCellSize = cellSize;
+    state.renderedGridW = gridW;
+    state.renderedGridH = gridH;
+    state.renderedMode = "classic";
     state.outputCanvas = outputCanvas;
+    state.edgeMask = edgeMask;
     resetSampleDisplay();
 
     el.exportPngBtn.disabled = false;
@@ -673,6 +848,10 @@ function disableGenerationDependentButtons() {
   el.paletteBtn.disabled = true;
   el.exportPanelsBtn.disabled = true;
   el.optimizeBricksBtn.disabled = true;
+  el.exportAdaptiveTilesBtn.disabled = true;
+  el.exportAdaptiveShoppingBtn.disabled = true;
+  el.exportDiceGuideBtn.disabled = true;
+  el.exportDiceShoppingBtn.disabled = true;
 }
 
 function clearBrickLayout() {
@@ -683,6 +862,155 @@ function clearBrickLayout() {
   el.exportBricksCsvBtn.disabled = true;
   el.exportShoppingListBtn.disabled = true;
 }
+
+// ---------------------------------------------------------------------------
+// Generate -- Adaptive (quadtree)
+// ---------------------------------------------------------------------------
+
+el.adaptiveGenerateBtn.addEventListener("click", generateAdaptiveMosaic);
+
+async function generateAdaptiveMosaic() {
+  if (!state.sourceCanvas) { setStatus("Load an image first."); return; }
+
+  const gridW = parseInt(el.gridWidth.value, 10);
+  const gridH = parseInt(el.gridHeight.value, 10);
+  const cellSize = parseInt(el.cellSize.value, 10);
+  const sensitivity = state.adaptiveSensitivity;
+
+  el.adaptiveGenerateBtn.disabled = true;
+  el.adaptiveGenerateBtn.textContent = "Generating...";
+  setStatus("Splitting into tiles, this can take a few seconds for larger grids...");
+
+  try {
+    const grid = imageToGrid(state.sourceCanvas, gridW, gridH);
+    const leaves = buildQuadtree(grid, gridW, gridH, sensitivity);
+    const outputCanvas = renderAdaptiveMosaic(leaves, gridW, gridH, cellSize, state.bgColor, makeCanvas);
+
+    state.adaptiveLeaves = leaves;
+    state.renderedMode = "adaptive";
+    state.renderedCellSize = cellSize;
+    state.renderedGridW = gridW;
+    state.renderedGridH = gridH;
+    state.outputCanvas = outputCanvas;
+    resetSampleDisplay();
+
+    el.exportPngBtn.disabled = false;
+    el.exportAdaptiveTilesBtn.disabled = false;
+    el.exportAdaptiveShoppingBtn.disabled = false;
+    clearBrickLayout();
+
+    setViewMode("output");
+    setStatus(`Done — ${leaves.length} tiles, ${gridW}×${gridH} finest grid.`);
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    el.adaptiveGenerateBtn.disabled = false;
+    el.adaptiveGenerateBtn.textContent = "Generate Mosaic";
+  }
+}
+
+el.exportAdaptiveTilesBtn.addEventListener("click", () => {
+  if (!state.adaptiveLeaves) return;
+  const json = buildAdaptiveTilesJson(state.adaptiveLeaves, state.renderedGridW, state.renderedGridH,
+    { sourceName: state.sourceFileName });
+  downloadText(json, "adaptive_tiles.json", "application/json");
+  setStatus("Saved adaptive_tiles.json");
+});
+
+el.exportAdaptiveShoppingBtn.addEventListener("click", () => {
+  if (!state.adaptiveLeaves) return;
+  const csv = buildAdaptiveShoppingListCsv(state.adaptiveLeaves);
+  downloadText(csv, "adaptive_shopping_list.csv", "text/csv");
+  setStatus("Saved adaptive_shopping_list.csv");
+});
+
+// ---------------------------------------------------------------------------
+// Generate -- Dice (grayscale + Floyd-Steinberg dither to pip counts)
+// ---------------------------------------------------------------------------
+
+el.diceGenerateBtn.addEventListener("click", generateDiceMosaic);
+
+async function generateDiceMosaic() {
+  if (!state.sourceCanvas) { setStatus("Load an image first."); return; }
+
+  const gridW = parseInt(el.gridWidth.value, 10);
+  const gridH = parseInt(el.gridHeight.value, 10);
+  const cellSize = parseInt(el.cellSize.value, 10);
+  const dieColor = state.dieColor;
+  const pipColor = state.pipColor;
+
+  el.diceGenerateBtn.disabled = true;
+  el.diceGenerateBtn.textContent = "Generating...";
+  setStatus("Dithering to dice faces, this can take a few seconds for larger grids...");
+
+  try {
+    const grayGrid = imageToGrayGrid(state.sourceCanvas, gridW, gridH);
+    const levels = pipLevelBrightness(dieColor, pipColor);
+    const stretched = stretchToRange(grayGrid, Math.min(...levels), Math.max(...levels));
+    const pipGrid = ditherToPips(stretched, gridW, gridH, levels);
+    const outputCanvas = renderDiceMosaic(pipGrid, gridW, gridH, cellSize, dieColor, pipColor,
+      state.bgColor, makeCanvas);
+
+    state.dicePipGrid = pipGrid;
+    state.renderedMode = "dice";
+    state.renderedCellSize = cellSize;
+    state.renderedGridW = gridW;
+    state.renderedGridH = gridH;
+    state.outputCanvas = outputCanvas;
+    resetSampleDisplay();
+
+    el.exportPngBtn.disabled = false;
+    el.exportDiceGuideBtn.disabled = false;
+    el.exportDiceShoppingBtn.disabled = false;
+    clearBrickLayout();
+
+    setViewMode("output");
+    setStatus(`Done — ${gridW * gridH} dice, ${gridW}×${gridH} grid.`);
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    el.diceGenerateBtn.disabled = false;
+    el.diceGenerateBtn.textContent = "Generate Mosaic";
+  }
+}
+
+el.exportDiceGuideBtn.addEventListener("click", exportDiceBuildGuide);
+
+function exportDiceBuildGuide() {
+  if (!state.dicePipGrid) return;
+  try {
+    const { renderedGridW: gridW, renderedGridH: gridH, renderedCellSize: cellSize } = state;
+    // Print-ready convention (same as the paint-by-number PDF): white faces
+    // with black pips and a thin outline, regardless of the on-screen
+    // die/pip colors, so the guide is usable printed in black & white.
+    const page1 = renderDiceMosaic(state.dicePipGrid, gridW, gridH, cellSize,
+      [255, 255, 255], [20, 20, 20], [255, 255, 255], makeCanvas,
+      { outlineColor: [150, 150, 150] });
+    const page2 = renderDiceKey(state.dicePipGrid, [255, 255, 255], [20, 20, 20], makeCanvas);
+
+    const doc = new jspdf.jsPDF({
+      unit: "px",
+      format: [page1.width, page1.height],
+      orientation: page1.width >= page1.height ? "landscape" : "portrait",
+    });
+    doc.addImage(page1.toDataURL("image/png"), "PNG", 0, 0, page1.width, page1.height);
+    doc.addPage([page2.width, page2.height], page2.width >= page2.height ? "landscape" : "portrait");
+    doc.addImage(page2.toDataURL("image/png"), "PNG", 0, 0, page2.width, page2.height);
+    doc.save("dice_build_guide.pdf");
+    setStatus("Saved dice_build_guide.pdf (2 pages)");
+  } catch (err) {
+    setStatus(`Error building dice build guide PDF: ${err.message}`);
+    console.error(err);
+  }
+}
+
+el.exportDiceShoppingBtn.addEventListener("click", () => {
+  if (!state.dicePipGrid) return;
+  downloadText(buildDiceShoppingListCsv(state.dicePipGrid), "dice_shopping_list.csv", "text/csv");
+  setStatus("Saved dice_shopping_list.csv");
+});
 
 // ---------------------------------------------------------------------------
 // Dialog helper
@@ -794,7 +1122,8 @@ function editPaletteColor(idx, newRgb) {
   }
   state.palette[idx] = newRgb;
   state.outputCanvas = renderMosaic(state.quantizedGrid, state.gridW, state.gridH,
-    state.renderedShape, state.renderedCellSize, state.bgColor, makeCanvas);
+    state.renderedShape, state.renderedCellSize, state.bgColor, makeCanvas,
+    { artistic: state.artistic, edgeMask: state.edgeMask });
   if (state.viewMode === "output") refreshPreview(false);
   setStatus(`Updated Color #${idx + 1} to ${rgbToHex(newRgb)}.`);
 }
@@ -1118,6 +1447,8 @@ function exportPaintByNumber() {
 
 setSwatchButton(el.bgColorBtn, state.bgColor);
 setSwatchButton(el.monoColorBtn, state.monochromeBaseColor);
+setSwatchButton(el.dieColorBtn, state.dieColor);
+setSwatchButton(el.pipColorBtn, state.pipColor);
 updateColorSourceUI();
 updateSizeEstimate();
 updatePanelEstimate();
