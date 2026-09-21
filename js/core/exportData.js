@@ -2,12 +2,16 @@
  * exportData.js
  * Build JSON/CSV strings (for client-side download, no filesystem access)
  * matching mosaic_core.py's export_json / export_csv / export_palette_csv /
- * export_bricks_json / export_bricks_csv / export_brick_shopping_list_csv.
+ * export_bricks_json / export_bricks_csv / export_brick_shopping_list_csv /
+ * export_adaptive_tiles_json / export_dice_shopping_list_csv.
  */
 
 import { rgbToHex } from "./color.js";
 import { colorCounts } from "./colorCounts.js";
 import { footprintLabel, brickCounts } from "./bricks.js";
+import { diceCounts } from "./dice.js";
+import { adaptiveColorCounts } from "./adaptive.js";
+import { nearestPaintMatchesAllBrands, formatMatch, formatBestMatch } from "./paintColors.js";
 
 function csvEscape(value) {
   const s = String(value);
@@ -86,10 +90,23 @@ export function buildGridCsv(grid, gridW, gridH, palette = null, names = [], opt
   return toCsv(headers, rows);
 }
 
+/** The color-count "shopping list" CSV, plus -- for each color -- the
+ * nearest real paint match in Sherwin-Williams, Behr, and Krylon (see
+ * paintColors.js), and which of the three is the single closest match
+ * overall. Handy if you're planning to actually paint the piece rather
+ * than just tally what colors it uses. */
 export function buildPaletteCsv(grid, palette, names = []) {
   const counts = colorCounts(grid, palette, names);
-  const rows = counts.map((c, i) => [i + 1, c.hex, c.rgb[0], c.rgb[1], c.rgb[2], c.name, c.count]);
-  return toCsv(["color_number", "hex", "r", "g", "b", "name", "count"], rows);
+  const matches = nearestPaintMatchesAllBrands(counts.map(c => c.rgb));
+  const rows = counts.map((c, i) => [
+    i + 1, c.hex, c.rgb[0], c.rgb[1], c.rgb[2], c.name, c.count,
+    formatMatch(matches[i]["Sherwin-Williams"]),
+    formatMatch(matches[i]["Behr"]),
+    formatMatch(matches[i]["Krylon"]),
+    formatBestMatch(matches[i].best),
+  ]);
+  return toCsv(["color_number", "hex", "r", "g", "b", "name", "count",
+    "sherwin_williams_match", "behr_match", "krylon_match", "best_match"], rows);
 }
 
 export function buildBricksJson(bricks, palette, shape, options = {}) {
@@ -131,4 +148,54 @@ export function buildShoppingListCsv(bricks, palette, names = []) {
   const counts = brickCounts(bricks, palette, names);
   const rows = counts.map(c => [c.footprint, c.hex, c.rgb[0], c.rgb[1], c.rgb[2], c.name, c.count]);
   return toCsv(["footprint", "hex", "r", "g", "b", "name", "count"], rows);
+}
+
+/** Adaptive mode's tile list -- each quadtree leaf's grid-cell rect and
+ * average color. There's no fixed palette in adaptive mode (colors are
+ * continuous per-tile averages, not quantized), so this is the adaptive
+ * equivalent of buildGridJson/buildBricksJson rather than a drop-in
+ * replacement for either. */
+export function buildAdaptiveTilesJson(leaves, gridW, gridH, options = {}) {
+  const { sourceName = "" } = options;
+  const tiles = [...leaves]
+    .sort((a, b) => (a.y - b.y) || (a.x - b.x))
+    .map(leaf => ({
+      row: leaf.y + 1, col: leaf.x + 1,
+      width: leaf.w, height: leaf.h,
+      rgb: leaf.rgb, hex: rgbToHex(leaf.rgb),
+    }));
+  const data = {
+    source_image: sourceName,
+    grid_width: gridW, grid_height: gridH,
+    tile_count: tiles.length,
+    tiles,
+  };
+  return JSON.stringify(data, null, 2);
+}
+
+/** Adaptive mode's color shopping list -- every unique color the mosaic
+ * uses, how many grid cells' worth of it are needed, and the nearest real
+ * paint match in Sherwin-Williams, Behr, and Krylon -- the adaptive
+ * equivalent of buildPaletteCsv. Because adaptive tile colors are
+ * continuous per-tile averages rather than a small fixed palette, this
+ * list is naturally longer for busy/gradient-heavy source images and
+ * stays short for flat, blocky ones. */
+export function buildAdaptiveShoppingListCsv(leaves) {
+  const counts = adaptiveColorCounts(leaves);
+  const matches = nearestPaintMatchesAllBrands(counts.map(c => c.rgb));
+  const rows = counts.map((c, i) => [
+    c.hex, c.rgb[0], c.rgb[1], c.rgb[2], c.count,
+    formatMatch(matches[i]["Sherwin-Williams"]),
+    formatMatch(matches[i]["Behr"]),
+    formatMatch(matches[i]["Krylon"]),
+    formatBestMatch(matches[i].best),
+  ]);
+  return toCsv(["hex", "r", "g", "b", "cell_count",
+    "sherwin_williams_match", "behr_match", "krylon_match", "best_match"], rows);
+}
+
+/** Dice mode's shopping list -- how many dice show each face (1-6). */
+export function buildDiceShoppingListCsv(pipGrid) {
+  const rows = diceCounts(pipGrid).map(c => [c.pips, c.count]);
+  return toCsv(["pips", "count"], rows);
 }
