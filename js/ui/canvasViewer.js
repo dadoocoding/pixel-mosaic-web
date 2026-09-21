@@ -7,10 +7,16 @@
  */
 
 export class CanvasViewer {
-  constructor(canvasEl, { onClick } = {}) {
+  constructor(canvasEl, { onClick, onTransformChange } = {}) {
     this.canvas = canvasEl;
     this.ctx = canvasEl.getContext("2d");
     this.onClick = onClick;
+    // Fired whenever scale/offset (or the container size backing "fit")
+    // changes, so callers can react -- e.g. app.js uses this to hide the
+    // mobile save-overlay <img> whenever the view isn't at its default fit,
+    // since that overlay always mirrors the full un-zoomed image and would
+    // otherwise sit on top of (and visually hide) the live-zoomed canvas.
+    this.onTransformChange = onTransformChange;
     this.image = null; // an HTMLCanvasElement/OffscreenCanvas holding the full-res image
     this.scale = 1;
     this.offsetX = 0;
@@ -20,7 +26,7 @@ export class CanvasViewer {
     this._placeholder = "";
 
     this._bindEvents();
-    this._resizeObserver = new ResizeObserver(() => this._draw());
+    this._resizeObserver = new ResizeObserver(() => { this._draw(); this.onTransformChange?.(); });
     this._resizeObserver.observe(this.canvas.parentElement);
     this._draw();
   }
@@ -30,6 +36,7 @@ export class CanvasViewer {
     this._placeholder = "";
     if (resetView) this._fitToView();
     this._draw();
+    this.onTransformChange?.();
   }
 
   showPlaceholder(text) {
@@ -40,7 +47,23 @@ export class CanvasViewer {
 
   zoomIn() { this._zoomAtCenter(1.25); }
   zoomOut() { this._zoomAtCenter(1 / 1.25); }
-  zoomReset() { this._fitToView(); this._draw(); }
+  zoomReset() { this._fitToView(); this._draw(); this.onTransformChange?.(); }
+
+  // True when the current scale/offset matches (within a small tolerance)
+  // what _fitToView() would compute right now -- i.e. the view is at its
+  // default "fit to container" state, not interactively zoomed or panned.
+  isAtDefaultFit() {
+    if (!this.image) return true;
+    const rect = this.canvas.parentElement.getBoundingClientRect();
+    const iw = this.image.width, ih = this.image.height;
+    if (rect.width < 2 || rect.height < 2 || iw === 0 || ih === 0) return true;
+    const fitScale = Math.min(rect.width / iw, rect.height / ih);
+    const fitOffsetX = (rect.width - iw * fitScale) / 2;
+    const fitOffsetY = (rect.height - ih * fitScale) / 2;
+    return Math.abs(this.scale - fitScale) < fitScale * 0.01
+        && Math.abs(this.offsetX - fitOffsetX) < 1
+        && Math.abs(this.offsetY - fitOffsetY) < 1;
+  }
 
   _fitToView() {
     if (!this.image) return;
@@ -65,6 +88,7 @@ export class CanvasViewer {
     this.offsetX = mx - ix * this.scale;
     this.offsetY = my - iy * this.scale;
     this._draw();
+    this.onTransformChange?.();
   }
 
   _bindEvents() {
@@ -88,6 +112,7 @@ export class CanvasViewer {
       this.offsetX += dx; this.offsetY += dy;
       lastX = e.clientX; lastY = e.clientY;
       this._draw();
+      this.onTransformChange?.();
     });
     window.addEventListener("mouseup", (e) => {
       if (dragging && !moved && this.image && this.onClick) {

@@ -192,7 +192,10 @@ function setSwatchButton(btn, rgb) {
 // Preview viewer
 // ---------------------------------------------------------------------------
 
-const viewer = new CanvasViewer(el.previewCanvas, { onClick: onCanvasClick });
+const viewer = new CanvasViewer(el.previewCanvas, {
+  onClick: onCanvasClick,
+  onTransformChange: () => syncOverlayVisibility(),
+});
 
 function refreshPreview(resetView = true) {
   let shown = null;
@@ -216,7 +219,16 @@ function refreshPreview(resetView = true) {
 // actually changes (generate, view toggle, bg-color/palette edits, brick
 // optimize) -- not on every pan/zoom frame, since the overlay always shows
 // the full, un-cropped image regardless of the canvas's current zoom.
+//
+// Because of that last point, the overlay only visually lines up with the
+// canvas while the canvas is at its default "fit to view" scale/position --
+// see syncOverlayVisibility(), which hides it (without touching its
+// content) whenever the user zooms or pans away from that, so it doesn't
+// sit on top of and block the live-zoomed canvas underneath.
+let overlayHasContent = false;
+
 function updateSaveOverlay(canvasEl) {
+  overlayHasContent = !!canvasEl;
   if (!canvasEl) {
     el.previewSaveOverlay.hidden = true;
     el.previewSaveOverlay.removeAttribute("src");
@@ -224,14 +236,19 @@ function updateSaveOverlay(canvasEl) {
   }
   try {
     el.previewSaveOverlay.src = canvasEl.toDataURL("image/png");
-    el.previewSaveOverlay.hidden = false;
+    syncOverlayVisibility();
   } catch (err) {
     // Defensive only -- every canvas here is drawn from same-origin/local
     // or CORS-fetched-as-blob image data, so this shouldn't actually taint,
     // but never let a save-overlay hiccup break the rest of the preview.
+    overlayHasContent = false;
     el.previewSaveOverlay.hidden = true;
     console.warn("Couldn't update mobile save overlay:", err);
   }
+}
+
+function syncOverlayVisibility() {
+  el.previewSaveOverlay.hidden = !overlayHasContent || !viewer.isAtDefaultFit();
 }
 
 // On touch-primary devices the overlay intercepts taps (see the CSS media
