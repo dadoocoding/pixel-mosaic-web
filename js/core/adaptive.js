@@ -145,7 +145,15 @@ function roundedRectPath(ctx, x, y, w, h, r) {
 }
 
 /** Render quadtree leaf tiles (see buildQuadtree) as rounded squares, sized
- * to each tile's own footprint, with a small gap between tiles. */
+ * to each tile's own footprint, with a small gap between tiles.
+ *
+ * The gap is a fixed number of pixels (cellSize * padFrac), the same for
+ * every tile regardless of its own size -- like a constant-width grout
+ * line/seam a physical build would actually have. (An earlier version
+ * scaled the gap to each tile's own footprint -- min(tileW,tileH)*padFrac
+ * -- which meant bigger flat-region tiles got a visibly wider gap than
+ * small busy-region ones, a distortion that wouldn't exist in a real
+ * built piece.) */
 export function renderAdaptiveMosaic(leaves, gridW, gridH, cellSize, bgColor, createCanvasFn,
                                       options = {}) {
   const { padFrac = 0.06, cornerRadiusFrac = 0.16 } = options;
@@ -156,10 +164,10 @@ export function renderAdaptiveMosaic(leaves, gridW, gridH, cellSize, bgColor, cr
   ctx.fillStyle = `rgb(${bgColor.join(",")})`;
   ctx.fillRect(0, 0, imgW, imgH);
 
+  const pad = cellSize * padFrac;
   for (const leaf of leaves) {
     const x0 = leaf.x * cellSize, y0 = leaf.y * cellSize;
     const wPx = leaf.w * cellSize, hPx = leaf.h * cellSize;
-    const pad = Math.min(wPx, hPx) * padFrac;
     const radius = Math.max(1, Math.min(wPx, hPx) * cornerRadiusFrac);
     roundedRectPath(ctx, x0 + pad, y0 + pad, wPx - 2 * pad, hPx - 2 * pad, radius);
     ctx.fillStyle = `rgb(${leaf.rgb.join(",")})`;

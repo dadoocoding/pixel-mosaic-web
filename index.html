@@ -26,14 +26,23 @@
     </div>
     <input type="file" id="fileInput" accept="image/*" hidden>
 
-    <label for="gridWidth">Grid width (cells)</label>
-    <div class="slider-row"><input type="range" id="gridWidth" min="4" max="240" value="40"><span class="slider-val" id="gridWidthVal">40</span></div>
+    <div class="button-row"><button id="exportSettingsBtn">Export Settings (JSON)</button></div>
+    <div class="button-row"><button id="importSettingsBtn">Import Settings (JSON)</button></div>
+    <input type="file" id="settingsFileInput" accept="application/json,.json" hidden>
 
-    <label for="gridHeight">Grid height (cells)</label>
-    <div class="slider-row"><input type="range" id="gridHeight" min="4" max="240" value="40"><span class="slider-val" id="gridHeightVal">40</span></div>
+    <!-- Grid width/height (in cells) drive Classic/Adaptive/Dice. Rubik's
+         Cube mode sizes itself in cube units instead (see #rubiksPanel), so
+         this whole block is hidden while that mode is selected. -->
+    <div id="sharedGridSizeControls">
+      <label for="gridWidth">Grid width (cells)</label>
+      <div class="slider-row"><input type="range" id="gridWidth" min="4" max="400" value="40"><span class="slider-val" id="gridWidthVal">40</span></div>
 
-    <label class="checkbox-label"><input type="checkbox" id="lockAspect" checked> Lock aspect ratio to source image</label>
-    <p class="hint" id="sizeEstimate"></p>
+      <label for="gridHeight">Grid height (cells)</label>
+      <div class="slider-row"><input type="range" id="gridHeight" min="4" max="400" value="40"><span class="slider-val" id="gridHeightVal">40</span></div>
+
+      <label class="checkbox-label"><input type="checkbox" id="lockAspect" checked> Lock aspect ratio to source image</label>
+      <p class="hint" id="sizeEstimate"></p>
+    </div>
 
     <!-- Cell size & background color -- shared by all 3 layout modes. Grid
          width/height above are shared too: for Adaptive they're the finest
@@ -51,6 +60,9 @@
       <button data-layout="classic" class="active" type="button">Classic Grid</button>
       <button data-layout="adaptive" type="button">Adaptive</button>
       <button data-layout="dice" type="button">Dice</button>
+      <button data-layout="rubiks" type="button">Rubik's Cube</button>
+      <button data-layout="meta" type="button">Meta</button>
+      <button data-layout="crossstitch" type="button">Cross-Stitch</button>
     </div>
 
     <div id="classicPanel">
@@ -96,9 +108,9 @@
 
       <label>Sub-structures <span class="hint-inline">(split output into build-able sections)</span></label>
       <label for="panelWidth" class="sub-label">Panel width (cells)</label>
-      <div class="slider-row"><input type="range" id="panelWidth" min="2" max="240" value="20"><span class="slider-val" id="panelWidthVal">20</span></div>
+      <div class="slider-row"><input type="range" id="panelWidth" min="2" max="400" value="20"><span class="slider-val" id="panelWidthVal">20</span></div>
       <label for="panelHeight" class="sub-label">Panel height (cells)</label>
-      <div class="slider-row"><input type="range" id="panelHeight" min="2" max="240" value="20"><span class="slider-val" id="panelHeightVal">20</span></div>
+      <div class="slider-row"><input type="range" id="panelHeight" min="2" max="400" value="20"><span class="slider-val" id="panelHeightVal">20</span></div>
       <p class="hint" id="panelEstimate"></p>
       <div class="button-row"><button id="exportPanelsBtn" disabled>Export Panels (.zip)</button></div>
 
@@ -135,7 +147,53 @@
       <div class="button-row"><button id="exportDiceShoppingBtn" disabled>Save Dice Shopping List (CSV)</button></div>
     </div>
 
-    <!-- Save Image (PNG) -- shared by all 3 layout modes, always sits right
+    <div id="rubiksPanel" hidden>
+      <p class="hint">Quantizes the image to just the 6 colors a real Rubik's
+        Cube comes in (white/red/orange/yellow/green/blue), then groups the
+        grid into 3×3 blocks — one physical cube per block.</p>
+
+      <label for="cubesWide">Cubes wide</label>
+      <div class="slider-row"><input type="range" id="cubesWide" min="2" max="80" value="20"><span class="slider-val" id="cubesWideVal">20</span></div>
+
+      <label for="cubesTall">Cubes tall</label>
+      <div class="slider-row"><input type="range" id="cubesTall" min="2" max="80" value="15"><span class="slider-val" id="cubesTallVal">15</span></div>
+
+      <label class="checkbox-label"><input type="checkbox" id="lockAspectRubiks" checked> Lock aspect ratio to source image</label>
+
+      <p class="hint" id="rubiksSizeEstimate"></p>
+
+      <div class="button-row"><button id="rubiksGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <label>Export</label>
+      <div class="button-row"><button id="exportRubiksGuideBtn" disabled>Save Cube Build Guide (PDF)</button></div>
+      <div class="button-row"><button id="exportRubiksShoppingBtn" disabled>Save Cube Shopping List (CSV)</button></div>
+    </div>
+
+    <div id="metaPanel" hidden>
+      <p class="hint">Every cell shows the whole source photo, tiny, tinted so
+        its average color reads as that cell's mosaic color — a mosaic
+        built out of copies of itself.</p>
+
+      <label for="tintStrength">Tint strength <span class="hint-inline">(0 = untouched thumbnail, 100 = fully tinted)</span></label>
+      <div class="slider-row"><input type="range" id="tintStrength" min="0" max="100" value="85"><span class="slider-val" id="tintStrengthVal">85</span></div>
+
+      <div class="button-row"><button id="metaGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+    </div>
+
+    <div id="crossstitchPanel" hidden>
+      <p class="hint">Quantizes the image to the real DMC embroidery floss
+        palette (456 colors). A higher grid width/height gives a
+        finer-detail pattern — real projects often use 100+ stitches
+        per side.</p>
+
+      <div class="button-row"><button id="crossstitchGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <label>Export</label>
+      <div class="button-row"><button id="exportCrossStitchPatternBtn" disabled>Save Pattern Chart (PDF)</button></div>
+      <div class="button-row"><button id="exportCrossStitchShoppingBtn" disabled>Save Floss Shopping List (CSV)</button></div>
+    </div>
+
+    <!-- Save Image (PNG) -- shared by all layout modes, always sits right
          below whichever panel above is currently shown -->
     <div class="button-row"><button id="exportPngBtn" disabled>Save Image (PNG)</button></div>
 

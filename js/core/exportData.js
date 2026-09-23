@@ -10,8 +10,10 @@ import { rgbToHex } from "./color.js";
 import { colorCounts } from "./colorCounts.js";
 import { footprintLabel, brickCounts } from "./bricks.js";
 import { diceCounts } from "./dice.js";
+import { rubiksCubeCount, RUBIKS_COLOR_NAMES } from "./rubiks.js";
 import { adaptiveColorCounts } from "./adaptive.js";
 import { nearestPaintMatchesAllBrands, formatMatch, formatBestMatch } from "./paintColors.js";
+import { dmcColorCounts } from "./crossstitch.js";
 
 function csvEscape(value) {
   const s = String(value);
@@ -198,4 +200,27 @@ export function buildAdaptiveShoppingListCsv(leaves) {
 export function buildDiceShoppingListCsv(pipGrid) {
   const rows = diceCounts(pipGrid).map(c => [c.pips, c.count]);
   return toCsv(["pips", "count"], rows);
+}
+
+/** Rubik's Cube mode's shopping list -- total physical cubes needed, plus
+ * how many of the 9 stickers-per-cube across the whole mosaic use each of
+ * the 6 fixed cube colors. */
+export function buildRubiksShoppingListCsv(grid, palette, gridW, gridH) {
+  const counts = colorCounts(grid, palette, RUBIKS_COLOR_NAMES);
+  const cubeTotal = rubiksCubeCount(gridW, gridH);
+  const lines = [
+    toCsv(["cubes_needed_total", String(cubeTotal)], []),
+    "",
+    toCsv(["color", "hex", "sticker_count"], counts.map(c => [c.name, c.hex, c.count])),
+  ];
+  return lines.join("\r\n");
+}
+
+/** Cross-Stitch mode's shopping list -- every DMC floss color used, its
+ * number/name, and how many stitches need it. `grid` is a flat [r,g,b]
+ * array (row-major, DMC-quantized). */
+export function buildCrossStitchShoppingListCsv(grid) {
+  const used = dmcColorCounts(grid).filter(c => c.count > 0);
+  return toCsv(["dmc_number", "color_name", "hex", "stitch_count"],
+    used.map(c => [c.number, c.name, c.hex, c.count]));
 }
