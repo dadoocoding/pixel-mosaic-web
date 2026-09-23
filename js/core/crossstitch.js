@@ -42,12 +42,19 @@ export const CROSS_STITCH_SYMBOLS = Array.from(
   + "0123456789"
 );
 
+/** The dmccolorchart.com page for a given DMC floss number, e.g. 310 ->
+ *  "https://dmccolorchart.com/color/310". */
+export function dmcColorUrl(dmcNumber) {
+  return `https://dmccolorchart.com/color/${dmcNumber}`;
+}
+
 /** Like colorCounts, but against the built-in DMC palette and with each
- *  entry's DMC floss number attached -- used for Cross-Stitch mode's
- *  pattern legend and shopping list. `grid` is a flat [r,g,b] array. */
+ *  entry's DMC floss number (and dmccolorchart.com link) attached -- used
+ *  for Cross-Stitch mode's pattern legend and shopping list. `grid` is a
+ *  flat [r,g,b] array. */
 export function dmcColorCounts(grid) {
   const counts = colorCounts(grid, DMC_RGB_PALETTE, DMC_COLOR_NAMES);
-  return counts.map((c, i) => ({ ...c, number: DMC_COLOR_NUMBERS[i] }));
+  return counts.map((c, i) => ({ ...c, number: DMC_COLOR_NUMBERS[i], url: dmcColorUrl(DMC_COLOR_NUMBERS[i]) }));
 }
 
 /** Assign a printable symbol to each DMC color actually used in `grid`

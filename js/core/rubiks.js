@@ -140,6 +140,33 @@ export function rubiksCubeCount(gridW, gridH) {
   return Math.floor(gridH / 3) * Math.floor(gridW / 3);
 }
 
+/** Apply a {cube color name: replacement rgb} reassignment (e.g.
+ * { Green: [0, 61, 165] } to show blue wherever the mosaic called for
+ * green) to a Rubik's-quantized grid. `baseGrid` must be the *original*
+ * fixed-6-color quantized grid (never itself already remapped) -- every
+ * cell is matched by which of the 6 RUBIKS_CUBE_COLORS it started out as,
+ * then swapped to that color's current assignment in colorMap (or left
+ * alone if that name isn't in colorMap, or maps to its own default color).
+ * Ported from mosaic_core.py's remap_rubiks_colors.
+ *
+ * Always working from the pristine base grid, rather than composing
+ * successive swaps against an already-remapped grid, means re-opening the
+ * recolor dialog and changing selections can never cascade incorrectly --
+ * e.g. assigning Green -> Blue and then, separately, Blue -> Red must not
+ * turn the original green stickers red. Every downstream Rubik's export
+ * (glossy render, build-sheet letters, color key/shopping list) keys off a
+ * cell's actual current RGB, so this remapped grid is all any of them
+ * need -- no other code has to know a reassignment happened. */
+export function remapRubiksColors(baseGrid, colorMap) {
+  const swap = new Map();
+  for (const { name, rgb } of RUBIKS_CUBE_COLORS) {
+    const newRgb = colorMap[name] || rgb;
+    if (rgbToHex(newRgb) !== rgbToHex(rgb)) swap.set(rgbToHex(rgb), newRgb);
+  }
+  if (swap.size === 0) return baseGrid;
+  return baseGrid.map(cell => swap.get(rgbToHex(cell)) || cell);
+}
+
 /** Printable page 1 of the build guide: an outlined grid where every
  * sticker shows its color's *letter* (W/R/O/Y/G/B) instead of the color
  * itself, with a heavier border around every 3x3 cube block and a small

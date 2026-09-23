@@ -221,6 +221,6 @@ export function buildRubiksShoppingListCsv(grid, palette, gridW, gridH) {
  * array (row-major, DMC-quantized). */
 export function buildCrossStitchShoppingListCsv(grid) {
   const used = dmcColorCounts(grid).filter(c => c.count > 0);
-  return toCsv(["dmc_number", "color_name", "hex", "stitch_count"],
-    used.map(c => [c.number, c.name, c.hex, c.count]));
+  return toCsv(["dmc_number", "color_name", "hex", "stitch_count", "dmc_url"],
+    used.map(c => [c.number, c.name, c.hex, c.count, c.url]));
 }

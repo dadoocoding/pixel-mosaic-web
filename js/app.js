@@ -7,7 +7,7 @@ import { rgbToHex, hexToRgb, contrastTextColor } from "./core/color.js";
 import { buildMonochromePalette } from "./core/quantize.js";
 import { imageToGrid } from "./core/grid.js";
 import { renderMosaic, renderBrickMosaic, estimateOutputDimensions, renderPaintByNumber, renderColorKey } from "./core/render.js";
-import { hexHitTest } from "./core/shapes.js";
+import { hexHitTest, circleInterlockHitTest } from "./core/shapes.js";
 import { computeEdgeMask } from "./core/edges.js";
 import { splitIntoPanels } from "./core/panels.js";
 import { LEGO_BRICK_SIZES, footprintLabel } from "./core/bricks.js";
@@ -19,11 +19,12 @@ import {
   renderDiceMosaic, renderDiceKey,
 } from "./core/dice.js";
 import {
-  RUBIKS_PALETTE, RUBIKS_COLOR_NAMES, renderRubiksMosaic, renderRubiksBuildSheet,
-  renderRubiksKey, rubiksCubeCount,
+  RUBIKS_CUBE_COLORS, RUBIKS_PALETTE, RUBIKS_COLOR_NAMES, renderRubiksMosaic, renderRubiksBuildSheet,
+  renderRubiksKey, rubiksCubeCount, remapRubiksColors,
 } from "./core/rubiks.js";
 import { renderMetaMosaic } from "./core/meta.js";
 import { renderFoundObjectMosaic } from "./core/foundobject.js";
+import { PIECE_SIZE_UNITS, formatPhysicalSize } from "./core/physicalSize.js";
 import { DMC_RGB_PALETTE } from "./core/dmc.js";
 import {
   dmcColorCounts, crossStitchSymbolMap, renderCrossStitchMosaic,
@@ -64,6 +65,7 @@ const state = {
   colorNames: [],
   renderedShape: "square",
   renderedCellSize: 36,
+  renderedCircleInterlock: false,
   outputCanvas: null,
   bgColor: [18, 18, 20],
   monochromeBaseColor: [40, 70, 170],
@@ -72,6 +74,8 @@ const state = {
   fixedPaletteNames: null,
   fixedPaletteLabel: null,
   shape: "square",
+  circleInterlock: false, // "circle" shape only: alternating rows offset +
+                           // packed tighter so circles nest instead of stack
   artistic: false,
   edgeSensitivity: 55,
   edgeMask: null,
@@ -100,6 +104,8 @@ const state = {
   cubesWide: 20,
   cubesTall: 15,
   rubiksGrid: null,      // flat [r,g,b] array, row-major (gridW=cubesWide*3, gridH=cubesTall*3)
+  rubiksBaseGrid: null,  // the pristine just-quantized 6-color grid, before any recolor reassignment
+  rubiksColorMap: {},    // { cube color name: replacement rgb } -- see remapRubiksColors
 
   tintStrength: 85,      // 0-100; Meta mode's hue/tint overlay strength
 
@@ -135,6 +141,7 @@ const el = {
   gridHeight: $("gridHeight"), gridHeightVal: $("gridHeightVal"),
   lockAspect: $("lockAspect"), sizeEstimate: $("sizeEstimate"),
   cellSize: $("cellSize"), cellSizeVal: $("cellSizeVal"),
+  pieceSize: $("pieceSize"), pieceSizeUnit: $("pieceSizeUnit"), physicalSizeEstimate: $("physicalSizeEstimate"),
   bgColorBtn: $("bgColorBtn"), bgColorPicker: $("bgColorPicker"),
   layoutModeSeg: $("layoutModeSeg"),
   classicPanel: $("classicPanel"), adaptivePanel: $("adaptivePanel"), dicePanel: $("dicePanel"),
@@ -144,6 +151,7 @@ const el = {
   fixedPaletteLabel: $("fixedPaletteLabel"), choosePaletteBtn: $("choosePaletteBtn"),
   monoColorBtn: $("monoColorBtn"), monoColorPicker: $("monoColorPicker"),
   shapeSeg: $("shapeSeg"),
+  circleInterlock: $("circleInterlock"), circleInterlockLabel: $("circleInterlockLabel"),
   artisticStyle: $("artisticStyle"),
   edgeSensitivity: $("edgeSensitivity"), edgeSensitivityVal: $("edgeSensitivityVal"),
   generateBtn: $("generateBtn"), paletteBtn: $("paletteBtn"), sampleSheetBtn: $("sampleSheetBtn"),
@@ -159,10 +167,11 @@ const el = {
   cubesTall: $("cubesTall"), cubesTallVal: $("cubesTallVal"),
   lockAspectRubiks: $("lockAspectRubiks"),
   rubiksSizeEstimate: $("rubiksSizeEstimate"),
-  rubiksGenerateBtn: $("rubiksGenerateBtn"),
+  rubiksGenerateBtn: $("rubiksGenerateBtn"), rubiksRecolorBtn: $("rubiksRecolorBtn"),
   exportRubiksGuideBtn: $("exportRubiksGuideBtn"), exportRubiksShoppingBtn: $("exportRubiksShoppingBtn"),
   tintStrength: $("tintStrength"), tintStrengthVal: $("tintStrengthVal"), metaGenerateBtn: $("metaGenerateBtn"),
   crossstitchPanel: $("crossstitchPanel"), crossstitchGenerateBtn: $("crossstitchGenerateBtn"),
+  crossstitchMaxColors: $("crossstitchMaxColors"), crossstitchMaxColorsVal: $("crossstitchMaxColorsVal"),
   exportCrossStitchPatternBtn: $("exportCrossStitchPatternBtn"),
   exportCrossStitchShoppingBtn: $("exportCrossStitchShoppingBtn"),
   foundObjectNumColors: $("foundObjectNumColors"), foundObjectNumColorsVal: $("foundObjectNumColorsVal"),
@@ -175,6 +184,7 @@ const el = {
   panelWidth: $("panelWidth"), panelWidthVal: $("panelWidthVal"),
   panelHeight: $("panelHeight"), panelHeightVal: $("panelHeightVal"),
   panelEstimate: $("panelEstimate"), exportPanelsBtn: $("exportPanelsBtn"),
+  exportPreviewBtn: $("exportPreviewBtn"),
   exportPngBtn: $("exportPngBtn"), exportJsonBtn: $("exportJsonBtn"), exportCsvBtn: $("exportCsvBtn"),
   exportPaintByNumberBtn: $("exportPaintByNumberBtn"),
   viewToggle: $("viewToggle"),
@@ -376,10 +386,12 @@ function sampleSourcePixel(x, y) {
 
 function sampleOutputCell(x, y) {
   if (!state.quantizedGrid) return;
-  const { gridW, gridH, renderedShape, renderedCellSize } = state;
+  const { gridW, gridH, renderedShape, renderedCellSize, renderedCircleInterlock } = state;
   let rc;
   if (renderedShape === "hexagon") {
     rc = hexHitTest(x, y, gridW, gridH, renderedCellSize);
+  } else if (renderedShape === "circle" && renderedCircleInterlock) {
+    rc = circleInterlockHitTest(x, y, gridW, gridH, renderedCellSize);
   } else {
     const col = Math.floor(x / renderedCellSize), row = Math.floor(y / renderedCellSize);
     rc = (row >= 0 && row < gridH && col >= 0 && col < gridW) ? [row, col] : null;
@@ -496,6 +508,8 @@ function applyLoadedImage(canvas, displayName) {
   state.adaptiveLeaves = null;
   state.dicePipGrid = null;
   state.rubiksGrid = null;
+  state.rubiksBaseGrid = null;
+  state.rubiksColorMap = {};
   state.crossStitchGrid = null;
   state.foundObjectQuantizedGrid = null;
   state.foundObjectPalette = null;
@@ -665,7 +679,7 @@ function updateSizeEstimate() {
   const gw = parseInt(el.gridWidth.value, 10);
   const gh = parseInt(el.gridHeight.value, 10);
   const cellSize = parseInt(el.cellSize.value, 10);
-  const [w, h] = estimateOutputDimensions(gw, gh, state.shape, cellSize);
+  const [w, h] = estimateOutputDimensions(gw, gh, state.shape, cellSize, state.circleInterlock);
   const mp = (w * h) / 1e6;
   const mb = (w * h * 3) / 1e6;
   const totalCells = gw * gh;
@@ -678,6 +692,7 @@ function updateSizeEstimate() {
     el.sizeEstimate.style.color = "";
   }
   el.sizeEstimate.textContent = text;
+  updatePhysicalSizeEstimate();
 }
 
 function updatePanelEstimate() {
@@ -714,6 +729,39 @@ function updateRubiksSizeEstimate() {
   el.rubiksSizeEstimate.textContent =
     `Output image: ~${w.toLocaleString()}\u00d7${h.toLocaleString()}px (${mp.toFixed(0)}MP) `
     + `\u2022 ${totalCubes.toLocaleString()} cubes total`;
+  updatePhysicalSizeEstimate();
+}
+
+/** Real-world size of the finished object, purely informational -- has no
+ * effect on generation. The count basis depends on the current mode:
+ * Rubik's Cube sizes itself in whole cubes (cubesWide x cubesTall); every
+ * other mode's physical piece is one grid cell (gridWidth x gridHeight),
+ * regardless of whether individual pieces later get merged into bigger
+ * visual groups (bricks, adaptive leaves, etc) -- the finished object is
+ * always that many pieces across, wide. */
+function updatePhysicalSizeEstimate() {
+  const pieceSize = parseFloat(el.pieceSize.value) || 0;
+  const unit = el.pieceSizeUnit.value;
+
+  let countW, countH, pieceWord;
+  if (state.layoutMode === "rubiks") {
+    countW = parseInt(el.cubesWide.value, 10);
+    countH = parseInt(el.cubesTall.value, 10);
+    pieceWord = "cube";
+  } else {
+    countW = parseInt(el.gridWidth.value, 10);
+    countH = parseInt(el.gridHeight.value, 10);
+    pieceWord = "piece";
+  }
+
+  const formatted = formatPhysicalSize(countW, countH, pieceSize, unit);
+  if (formatted) {
+    const plural = countW * countH !== 1 ? "s" : "";
+    el.physicalSizeEstimate.textContent =
+      `Physical size: ${formatted}  (${countW}\u00d7${countH} ${pieceWord}${plural})`;
+  } else {
+    el.physicalSizeEstimate.textContent = "";
+  }
 }
 
 el.gridWidth.addEventListener("input", () => {
@@ -729,11 +777,16 @@ el.lockAspect.addEventListener("change", () => {
   if (el.lockAspect.checked && state.sourceCanvas) { syncHeightToAspect(); updateSizeEstimate(); updatePanelEstimate(); }
 });
 el.numColors.addEventListener("input", () => { el.numColorsVal.textContent = el.numColors.value; });
+el.crossstitchMaxColors.addEventListener("input", () => {
+  el.crossstitchMaxColorsVal.textContent = el.crossstitchMaxColors.value;
+});
 el.cellSize.addEventListener("input", () => {
   el.cellSizeVal.textContent = el.cellSize.value;
   updateSizeEstimate();
   updateRubiksSizeEstimate();
 });
+el.pieceSize.addEventListener("input", updatePhysicalSizeEstimate);
+el.pieceSizeUnit.addEventListener("change", updatePhysicalSizeEstimate);
 el.panelWidth.addEventListener("input", () => { el.panelWidthVal.textContent = el.panelWidth.value; updatePanelEstimate(); });
 el.panelHeight.addEventListener("input", () => { el.panelHeightVal.textContent = el.panelHeight.value; updatePanelEstimate(); });
 
@@ -784,6 +837,7 @@ el.shapeSeg.addEventListener("click", (e) => {
 function setShape(shape) {
   state.shape = shape;
   [...el.shapeSeg.children].forEach(b => b.classList.toggle("active", b.dataset.shape === shape));
+  el.circleInterlockLabel.hidden = shape !== "circle";
   updateSizeEstimate();
 }
 
@@ -801,7 +855,7 @@ function rerenderCurrent(resetView = true) {
   if (state.renderedMode === "classic" && state.quantizedGrid) {
     state.outputCanvas = renderMosaic(state.quantizedGrid, state.renderedGridW, state.renderedGridH,
       state.renderedShape, state.renderedCellSize, state.bgColor, makeCanvas,
-      { artistic: state.artistic, edgeMask: state.edgeMask });
+      { artistic: state.artistic, edgeMask: state.edgeMask, circleInterlock: state.renderedCircleInterlock });
     if (state.viewMode === "output") refreshPreview(resetView);
   } else if (state.renderedMode === "adaptive" && state.adaptiveLeaves) {
     state.outputCanvas = renderAdaptiveMosaic(state.adaptiveLeaves, state.renderedGridW, state.renderedGridH,
@@ -850,6 +904,11 @@ function setLayoutMode(mode) {
   // other mode uses -- hide those to avoid showing two unrelated size
   // controls at once.
   el.sharedGridSizeControls.hidden = mode === "rubiks";
+  // Piece size's "physical size" line depends on which count basis
+  // applies (cube count for Rubik's, cell count for everything else), so
+  // it needs a recompute on every mode switch too, not just when the
+  // grid/cube sliders themselves move.
+  updatePhysicalSizeEstimate();
 }
 
 el.artisticStyle.addEventListener("change", () => {
@@ -872,6 +931,11 @@ el.adaptiveSensitivity.addEventListener("input", () => {
 });
 el.adaptiveRectangles.addEventListener("change", () => {
   state.adaptiveRectangles = el.adaptiveRectangles.checked;
+});
+
+el.circleInterlock.addEventListener("change", () => {
+  state.circleInterlock = el.circleInterlock.checked;
+  updateSizeEstimate();
 });
 
 el.foundObjectNumColors.addEventListener("input", () => {
@@ -918,6 +982,7 @@ async function generateMosaic() {
   const numColors = parseInt(el.numColors.value, 10) || null;
   const cellSize = parseInt(el.cellSize.value, 10);
   const shape = state.shape;
+  const circleInterlock = state.circleInterlock;
   const bgColor = state.bgColor;
 
   el.generateBtn.disabled = true;
@@ -955,7 +1020,7 @@ async function generateMosaic() {
       ? computeEdgeMask(state.sourceCanvas, gridW, gridH, state.edgeSensitivity)
       : null;
     const outputCanvas = renderMosaic(quantizedFlat, gridW, gridH, shape, cellSize, bgColor, makeCanvas,
-      { artistic, edgeMask });
+      { artistic, edgeMask, circleInterlock });
 
     state.gridW = gridW;
     state.gridH = gridH;
@@ -964,6 +1029,7 @@ async function generateMosaic() {
     state.colorNames = names ? [...names] : palette.map(() => "");
     state.renderedShape = shape;
     state.renderedCellSize = cellSize;
+    state.renderedCircleInterlock = circleInterlock;
     state.renderedGridW = gridW;
     state.renderedGridH = gridH;
     state.renderedMode = "classic";
@@ -972,6 +1038,7 @@ async function generateMosaic() {
     resetSampleDisplay();
 
     el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
     el.exportJsonBtn.disabled = false;
     el.exportCsvBtn.disabled = false;
     el.exportPaintByNumberBtn.disabled = false;
@@ -1008,6 +1075,7 @@ async function generateMosaic() {
 
 function disableGenerationDependentButtons() {
   el.exportPngBtn.disabled = true;
+  el.exportPreviewBtn.disabled = true;
   el.exportJsonBtn.disabled = true;
   el.exportCsvBtn.disabled = true;
   el.exportPaintByNumberBtn.disabled = true;
@@ -1021,6 +1089,7 @@ function disableGenerationDependentButtons() {
   el.exportDiceShoppingBtn.disabled = true;
   el.exportRubiksGuideBtn.disabled = true;
   el.exportRubiksShoppingBtn.disabled = true;
+  el.rubiksRecolorBtn.disabled = true;
   el.exportCrossStitchPatternBtn.disabled = true;
   el.exportCrossStitchShoppingBtn.disabled = true;
   el.foundObjectLibraryBtn.disabled = true;
@@ -1068,6 +1137,7 @@ async function generateAdaptiveMosaic() {
     resetSampleDisplay();
 
     el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
     el.exportAdaptiveTilesBtn.disabled = false;
     el.exportAdaptiveShoppingBtn.disabled = false;
     clearBrickLayout();
@@ -1134,6 +1204,7 @@ async function generateDiceMosaic() {
     resetSampleDisplay();
 
     el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
     el.exportDiceGuideBtn.disabled = false;
     el.exportDiceShoppingBtn.disabled = false;
     clearBrickLayout();
@@ -1211,6 +1282,8 @@ async function generateRubiksMosaic() {
     const outputCanvas = renderRubiksMosaic(quantizedFlat, gridW, gridH, cellSize, makeCanvas,
       { bgColor: state.bgColor });
 
+    state.rubiksBaseGrid = quantizedFlat;
+    state.rubiksColorMap = {};
     state.rubiksGrid = quantizedFlat;
     state.renderedMode = "rubiks";
     state.renderedCellSize = cellSize;
@@ -1220,8 +1293,10 @@ async function generateRubiksMosaic() {
     resetSampleDisplay();
 
     el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
     el.exportRubiksGuideBtn.disabled = false;
     el.exportRubiksShoppingBtn.disabled = false;
+    el.rubiksRecolorBtn.disabled = false;
     clearBrickLayout();
 
     setViewMode("output");
@@ -1267,6 +1342,79 @@ el.exportRubiksShoppingBtn.addEventListener("click", () => {
   setStatus("Saved rubiks_cube_shopping_list.csv");
 });
 
+// Recolor Cubes -- reassign any of the 6 fixed cube colors to display as a
+// different one of the 6 (e.g. "show blue wherever the mosaic called for
+// green"), via a dropdown per color rather than a free color-picker, since
+// a real cube sticker can only be one of the 6 colors it actually ships
+// with. Always recomputed fresh from state.rubiksBaseGrid (see
+// remapRubiksColors) so changing selections can never cascade incorrectly.
+el.rubiksRecolorBtn.addEventListener("click", openRubiksRecolorDialog);
+
+function openRubiksRecolorDialog() {
+  if (!state.rubiksBaseGrid) return;
+  const body = document.createElement("div");
+
+  for (const { name, rgb } of RUBIKS_CUBE_COLORS) {
+    const row = document.createElement("div");
+    row.className = "swatch-row";
+
+    const swatch = document.createElement("div");
+    swatch.className = "mini-swatch";
+    swatch.style.background = rgbToHex(rgb);
+    swatch.style.cursor = "default";
+
+    const label = document.createElement("span");
+    label.className = "recolor-label";
+    label.textContent = name;
+
+    const select = document.createElement("select");
+    for (const opt of RUBIKS_CUBE_COLORS) {
+      const optionEl = document.createElement("option");
+      optionEl.value = opt.name;
+      optionEl.textContent = opt.name;
+      select.appendChild(optionEl);
+    }
+    const currentRgb = state.rubiksColorMap[name] || rgb;
+    const currentMatch = RUBIKS_CUBE_COLORS.find(c => rgbToHex(c.rgb) === rgbToHex(currentRgb));
+    select.value = currentMatch ? currentMatch.name : name;
+    select.addEventListener("change", () => {
+      const chosen = RUBIKS_CUBE_COLORS.find(c => c.name === select.value);
+      state.rubiksColorMap[name] = chosen.rgb;
+      applyRubiksRecolor();
+    });
+
+    row.append(swatch, label, select);
+    body.appendChild(row);
+  }
+
+  showDialog({
+    title: "Recolor Cubes",
+    desc: "Choose what color each cube face should show as — e.g. set "
+      + "Green to Blue if you'd rather have a blue cube wherever the mosaic called for green.",
+    bodyEl: body,
+    actions: [
+      {
+        label: "Reset to Defaults", onClick: () => {
+          state.rubiksColorMap = {};
+          applyRubiksRecolor();
+          closeDialog();
+          openRubiksRecolorDialog();
+        },
+      },
+      { label: "Close", primary: true, onClick: closeDialog },
+    ],
+  });
+}
+
+function applyRubiksRecolor() {
+  if (!state.rubiksBaseGrid) return;
+  state.rubiksGrid = remapRubiksColors(state.rubiksBaseGrid, state.rubiksColorMap);
+  state.outputCanvas = renderRubiksMosaic(state.rubiksGrid, state.renderedGridW, state.renderedGridH,
+    state.renderedCellSize, makeCanvas, { bgColor: state.bgColor });
+  if (state.viewMode === "output") refreshPreview(false);
+  setStatus("Updated cube colors.");
+}
+
 // ---------------------------------------------------------------------------
 // Generate -- Meta (every cell is a tinted copy of the whole source photo)
 // ---------------------------------------------------------------------------
@@ -1303,6 +1451,7 @@ async function generateMetaMosaic() {
     resetSampleDisplay();
 
     el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
     clearBrickLayout();
 
     setViewMode("output");
@@ -1328,13 +1477,23 @@ async function generateCrossStitchMosaic() {
   const gridW = parseInt(el.gridWidth.value, 10);
   const gridH = parseInt(el.gridHeight.value, 10);
   const cellSize = parseInt(el.cellSize.value, 10);
+  const maxColors = parseInt(el.crossstitchMaxColors.value, 10) || null;
 
   el.crossstitchGenerateBtn.disabled = true;
   el.crossstitchGenerateBtn.textContent = "Generating...";
   setStatus("Matching to DMC floss colors, this can take a few seconds for larger grids...");
 
   try {
-    const grid = imageToGrid(state.sourceCanvas, gridW, gridH);
+    let grid = imageToGrid(state.sourceCanvas, gridW, gridH);
+    if (maxColors) {
+      // Pre-cluster to at most maxColors representative shades before DMC
+      // matching, so a busy/gradient-heavy photo can't DMC-match nearly
+      // every cell to its own nearby floss color -- reuses Classic mode's
+      // own K-Means "Number of colors" step (quantize-auto), just run
+      // ahead of the DMC match rather than as the final quantization.
+      const pre = await callWorker("quantize-auto", { points: grid, nColors: maxColors });
+      grid = Array.from(pre.labels).map(l => pre.palette[l]);
+    }
     const result = await callWorker("quantize-fixed", { points: grid, palette: DMC_RGB_PALETTE });
     const quantizedFlat = Array.from(result.labels).map(l => DMC_RGB_PALETTE[l]);
     const outputCanvas = renderCrossStitchMosaic(quantizedFlat, gridW, gridH, cellSize, makeCanvas);
@@ -1348,6 +1507,7 @@ async function generateCrossStitchMosaic() {
     resetSampleDisplay();
 
     el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
     el.exportCrossStitchPatternBtn.disabled = false;
     el.exportCrossStitchShoppingBtn.disabled = false;
     clearBrickLayout();
@@ -1397,6 +1557,21 @@ function exportCrossStitchPattern() {
       if (i > 0) doc.addPage([page.width, page.height], page.width >= page.height ? "landscape" : "portrait");
       doc.addImage(page.toDataURL("image/png"), "PNG", 0, 0, page.width, page.height);
     });
+
+    // The legend page is a flat raster (addImage above), so give each
+    // swatch row a real clickable link out to that color's dmccolorchart.com
+    // page as a separate annotation, positioned at the same pixel geometry
+    // renderCrossStitchLegendPage used to draw that row (pad/swatchSize/rowH).
+    const legendPage = pages[pages.length - 1];
+    const usedSorted = counts.filter(c => c.count > 0).slice().sort((a, b) => b.count - a.count);
+    const legendPad = 20, legendRowH = 44;
+    doc.setPage(pages.length);
+    let linkY = legendPad + 44;
+    for (const c of usedSorted) {
+      doc.link(legendPad, linkY, legendPage.width - legendPad * 2, legendRowH, { url: c.url });
+      linkY += legendRowH;
+    }
+
     doc.save("cross_stitch_pattern.pdf");
     setStatus(`Saved cross_stitch_pattern.pdf (${pages.length} pages)`);
   } catch (err) {
@@ -1456,6 +1631,7 @@ async function generateFoundObjectMosaic() {
     rerenderFoundObjectMosaic();
 
     el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
     el.foundObjectLibraryBtn.disabled = false;
     updateFoundObjectSummary();
     clearBrickLayout();
@@ -2109,6 +2285,38 @@ el.exportPngBtn.addEventListener("click", () => {
   state.outputCanvas.toBlob(blob => downloadBlob(blob, "mosaic.png"), "image/png");
 });
 
+// Lets the user look the full output over -- at its real size, not the
+// zoomed/panned view the main canvas happens to be sitting at -- before
+// deciding to save it, with the same Save action available right there.
+el.exportPreviewBtn.addEventListener("click", openExportPreviewDialog);
+
+function openExportPreviewDialog() {
+  if (!state.outputCanvas) return;
+  const body = document.createElement("div");
+  body.className = "export-preview-body";
+  const img = document.createElement("img");
+  img.className = "export-preview-img";
+  img.alt = "Mosaic output preview";
+  img.src = state.outputCanvas.toDataURL("image/png");
+  body.appendChild(img);
+
+  showDialog({
+    title: "Preview Export",
+    desc: `${state.outputCanvas.width}×${state.outputCanvas.height}px`,
+    bodyEl: body,
+    wide: true,
+    actions: [
+      { label: "Close", onClick: closeDialog },
+      {
+        label: "Save Image (PNG)...", primary: true, onClick: () => {
+          state.outputCanvas.toBlob(blob => downloadBlob(blob, "mosaic.png"), "image/png");
+          closeDialog();
+        },
+      },
+    ],
+  });
+}
+
 el.exportJsonBtn.addEventListener("click", () => {
   if (!state.quantizedGrid) return;
   const json = buildGridJson(state.quantizedGrid, state.gridW, state.gridH, state.palette, state.renderedShape,
@@ -2132,7 +2340,8 @@ function exportPaintByNumber() {
   if (!state.quantizedGrid) return;
   try {
     const page1 = renderPaintByNumber(state.quantizedGrid, state.gridW, state.gridH,
-      state.palette, state.renderedShape, state.renderedCellSize, makeCanvas);
+      state.palette, state.renderedShape, state.renderedCellSize, makeCanvas,
+      { circleInterlock: state.renderedCircleInterlock });
     const counts = colorCounts(state.quantizedGrid, state.palette, state.colorNames);
     const page2 = renderColorKey(state.palette, state.colorNames, counts, makeCanvas);
 
@@ -2172,6 +2381,8 @@ function collectSettings() {
       gridHeight: parseInt(el.gridHeight.value, 10),
       lockAspect: el.lockAspect.checked,
       cellSize: parseInt(el.cellSize.value, 10),
+      pieceSize: parseFloat(el.pieceSize.value) || 0,
+      pieceSizeUnit: el.pieceSizeUnit.value,
       bgColor: rgbToHex(state.bgColor),
       layoutMode: state.layoutMode,
 
@@ -2182,6 +2393,7 @@ function collectSettings() {
       fixedPaletteLabel: state.fixedPaletteLabel,
       monochromeBaseColor: rgbToHex(state.monochromeBaseColor),
       shape: state.shape,
+      circleInterlock: el.circleInterlock.checked,
       artistic: el.artisticStyle.checked,
       edgeSensitivity: parseInt(el.edgeSensitivity.value, 10),
 
@@ -2198,8 +2410,12 @@ function collectSettings() {
       cubesWide: parseInt(el.cubesWide.value, 10),
       cubesTall: parseInt(el.cubesTall.value, 10),
       lockAspectRubiks: el.lockAspectRubiks.checked,
+      rubiksColorMap: Object.fromEntries(
+        Object.entries(state.rubiksColorMap).map(([name, rgb]) => [name, rgbToHex(rgb)])),
 
       tintStrength: parseInt(el.tintStrength.value, 10),
+
+      crossstitchMaxColors: parseInt(el.crossstitchMaxColors.value, 10),
 
       // Found Object mode's per-color photo assignments aren't included --
       // they're uploaded image files, not JSON-friendly data -- so only
@@ -2221,6 +2437,8 @@ function applySettings(data) {
   if (Number.isFinite(s.gridHeight)) { el.gridHeight.value = s.gridHeight; el.gridHeightVal.textContent = s.gridHeight; }
   if (typeof s.lockAspect === "boolean") el.lockAspect.checked = s.lockAspect;
   if (Number.isFinite(s.cellSize)) { el.cellSize.value = s.cellSize; el.cellSizeVal.textContent = s.cellSize; }
+  if (Number.isFinite(s.pieceSize)) el.pieceSize.value = s.pieceSize;
+  if (PIECE_SIZE_UNITS.includes(s.pieceSizeUnit)) el.pieceSizeUnit.value = s.pieceSizeUnit;
   if (s.bgColor) { state.bgColor = hexToRgb(s.bgColor); setSwatchButton(el.bgColorBtn, state.bgColor); el.bgColorPicker.value = s.bgColor; }
 
   if (s.colorSourceMode) setColorSourceMode(s.colorSourceMode);
@@ -2240,6 +2458,7 @@ function applySettings(data) {
     el.monoColorPicker.value = s.monochromeBaseColor;
   }
   if (s.shape) setShape(s.shape);
+  if (typeof s.circleInterlock === "boolean") { el.circleInterlock.checked = s.circleInterlock; state.circleInterlock = s.circleInterlock; }
   if (typeof s.artistic === "boolean") { el.artisticStyle.checked = s.artistic; state.artistic = s.artistic; }
   if (Number.isFinite(s.edgeSensitivity)) {
     el.edgeSensitivity.value = s.edgeSensitivity;
@@ -2270,11 +2489,21 @@ function applySettings(data) {
   if (Number.isFinite(s.cubesWide)) { el.cubesWide.value = s.cubesWide; el.cubesWideVal.textContent = s.cubesWide; }
   if (Number.isFinite(s.cubesTall)) { el.cubesTall.value = s.cubesTall; el.cubesTallVal.textContent = s.cubesTall; }
   if (typeof s.lockAspectRubiks === "boolean") el.lockAspectRubiks.checked = s.lockAspectRubiks;
+  if (s.rubiksColorMap && typeof s.rubiksColorMap === "object") {
+    state.rubiksColorMap = Object.fromEntries(
+      Object.entries(s.rubiksColorMap).map(([name, hex]) => [name, hexToRgb(hex)]));
+    if (state.rubiksBaseGrid) applyRubiksRecolor();
+  }
 
   if (Number.isFinite(s.tintStrength)) {
     el.tintStrength.value = s.tintStrength;
     el.tintStrengthVal.textContent = s.tintStrength;
     state.tintStrength = s.tintStrength;
+  }
+
+  if (Number.isFinite(s.crossstitchMaxColors)) {
+    el.crossstitchMaxColors.value = s.crossstitchMaxColors;
+    el.crossstitchMaxColorsVal.textContent = s.crossstitchMaxColors;
   }
 
   if (Number.isFinite(s.foundObjectNumColors)) {

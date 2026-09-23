@@ -50,6 +50,21 @@
     <label for="cellSize">Cell size (output px per cell)</label>
     <div class="slider-row"><input type="range" id="cellSize" min="10" max="90" value="36"><span class="slider-val" id="cellSizeVal">36</span></div>
 
+    <!-- Piece size -- real-world size of one physical piece (a cell in
+         every mode except Rubik's Cube, where it's one whole cube). Purely
+         informational: shows the finished object's total physical size,
+         has no effect on rendering. -->
+    <label for="pieceSize">Piece size <span class="hint-inline">(real-world size of one piece)</span></label>
+    <div class="piece-size-row">
+      <input type="number" id="pieceSize" min="0" step="0.01" value="1">
+      <select id="pieceSizeUnit">
+        <option value="in">in</option>
+        <option value="mm">mm</option>
+        <option value="cm">cm</option>
+      </select>
+    </div>
+    <p class="hint" id="physicalSizeEstimate"></p>
+
     <label>Background color <span class="hint-inline">(shows in shape/tile gaps)</span></label>
     <button id="bgColorBtn" class="color-swatch-btn">#121214</button>
     <input type="color" id="bgColorPicker" value="#121214" hidden>
@@ -88,8 +103,11 @@
       <div class="segmented" id="shapeSeg">
         <button data-shape="square" class="active" type="button">Square</button>
         <button data-shape="circle" type="button">Circle</button>
+        <button data-shape="diamond" type="button">Diamond</button>
         <button data-shape="hexagon" type="button">Hexagon</button>
       </div>
+
+      <label class="checkbox-label" id="circleInterlockLabel" hidden><input type="checkbox" id="circleInterlock"> Interlock alternating rows (nest circles instead of stacking)</label>
 
       <label class="checkbox-label"><input type="checkbox" id="artisticStyle"> Artistic style (grid lines + edge outlines)</label>
       <label for="edgeSensitivity" class="sub-label">Edge sensitivity (higher = more outlining)</label>
@@ -167,6 +185,8 @@
 
       <div class="button-row"><button id="rubiksGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
 
+      <div class="button-row"><button id="rubiksRecolorBtn" disabled>Recolor Cubes...</button></div>
+
       <label>Export</label>
       <div class="button-row"><button id="exportRubiksGuideBtn" disabled>Save Cube Build Guide (PDF)</button></div>
       <div class="button-row"><button id="exportRubiksShoppingBtn" disabled>Save Cube Shopping List (CSV)</button></div>
@@ -188,6 +208,11 @@
         palette (456 colors). A higher grid width/height gives a
         finer-detail pattern — real projects often use 100+ stitches
         per side.</p>
+
+      <label for="crossstitchMaxColors">Max thread colors (0 = auto)</label>
+      <div class="slider-row"><input type="range" id="crossstitchMaxColors" min="0" max="64" value="0"><span class="slider-val" id="crossstitchMaxColorsVal">0</span></div>
+      <p class="hint">Too many floss colors in the shopping list? Turn this
+        down to merge similar shades before matching to DMC floss.</p>
 
       <div class="button-row"><button id="crossstitchGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
 
@@ -216,9 +241,12 @@
       <p class="hint" id="foundObjectSummary"></p>
     </div>
 
-    <!-- Save Image (PNG) -- shared by all layout modes, always sits right
-         below whichever panel above is currently shown -->
-    <div class="button-row"><button id="exportPngBtn" disabled>Save Image (PNG)</button></div>
+    <!-- Preview / Save Image (PNG) -- shared by all layout modes, always
+         sits right below whichever panel above is currently shown -->
+    <div class="button-row two-up">
+      <button id="exportPreviewBtn" disabled>Preview...</button>
+      <button id="exportPngBtn" disabled>Save Image (PNG)</button>
+    </div>
 
     <p class="footer-note">Pixel Mosaic &mdash; Dadoo Labs</p>
   </aside>

@@ -9,7 +9,7 @@
  * tests -- no browser-only globals referenced directly.
  */
 
-import { hexCorners, estimateOutputDimensions } from "./shapes.js";
+import { hexCorners, diamondCorners, estimateOutputDimensions } from "./shapes.js";
 import { rgbToHex, contrastTextColor } from "./color.js";
 
 export { estimateOutputDimensions };
@@ -21,14 +21,20 @@ export { estimateOutputDimensions };
  * quantized color -- tracing detected edges the way a hand-drawn pixel-art
  * piece would. edgeMask is a flat Uint8Array of length gridW*gridH,
  * row-major (same layout as quantizedGrid).
+ *
+ * options.circleInterlock (default false, only meaningful when
+ * shape === "circle"): instead of circles stacked directly on top of each
+ * other, alternating rows are shifted over by half a cell and packed
+ * closer together vertically so each row nests into the gap of the row
+ * below it (like coins/rivets), rather than lining up in a plain grid.
  */
 export function renderMosaic(quantizedGrid, gridW, gridH, shape, cellSize, bgColor, createCanvasFn,
                               options = {}) {
   const {
-    artistic = false, edgeMask = null,
+    artistic = false, edgeMask = null, circleInterlock = false,
     gridLineColor = [30, 30, 30], outlineColor = [10, 10, 10],
   } = options;
-  const [imgW, imgH] = estimateOutputDimensions(gridW, gridH, shape, cellSize);
+  const [imgW, imgH] = estimateOutputDimensions(gridW, gridH, shape, cellSize, circleInterlock);
   const canvas = createCanvasFn(imgW, imgH);
   const ctx = canvas.getContext("2d");
 
@@ -42,24 +48,55 @@ export function renderMosaic(quantizedGrid, gridW, gridH, shape, cellSize, bgCol
   };
 
   if (shape === "hexagon") {
+    // Flat-top hexagons: columns get the bigger spacing (1.5x size) and
+    // alternating *columns* are offset vertically by half a row so each
+    // hex nests cleanly into the notch of its neighbors instead of
+    // overlapping them (a hexagon this shape is 2x as wide as it is tall
+    // relative to its own height, so columns -- not rows -- need the
+    // wider spacing).
     const hexSize = cellSize * 0.58;
-    const hexW = Math.sqrt(3) * hexSize;
-    const hexH = 1.5 * hexSize;
+    const colW = 1.5 * hexSize;
+    const rowH = Math.sqrt(3) * hexSize;
     if (artistic) {
       ctx.strokeStyle = `rgb(${gridLineColor.join(",")})`;
       ctx.lineWidth = 1;
     }
     for (let row = 0; row < gridH; row++) {
-      const rowOffset = row % 2 === 1 ? hexW / 2 : 0;
       for (let col = 0; col < gridW; col++) {
         const [r, g, b] = cellFill(row, col);
-        const cx = hexW * col + rowOffset + cellSize / 2;
-        const cy = hexH * row + cellSize / 2;
+        const colOffset = col % 2 === 1 ? rowH / 2 : 0;
+        const cx = colW * col + cellSize / 2;
+        const cy = rowH * row + colOffset + cellSize / 2;
         const corners = hexCorners(cx, cy, hexSize);
         ctx.fillStyle = `rgb(${r},${g},${b})`;
         ctx.beginPath();
         corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
         ctx.closePath();
+        ctx.fill();
+        if (artistic) ctx.stroke();
+      }
+    }
+    return canvas;
+  }
+
+  if (shape === "circle" && circleInterlock) {
+    const colW = cellSize;
+    const rowH = cellSize * (Math.sqrt(3) / 2);
+    const pad = cellSize * 0.04;
+    const r = cellSize / 2 - pad;
+    if (artistic) {
+      ctx.strokeStyle = `rgb(${gridLineColor.join(",")})`;
+      ctx.lineWidth = 1;
+    }
+    for (let row = 0; row < gridH; row++) {
+      const rowOffset = row % 2 === 1 ? colW / 2 : 0;
+      for (let col = 0; col < gridW; col++) {
+        const [cr, cg, cb] = cellFill(row, col);
+        const cx = colW * col + rowOffset + cellSize / 2;
+        const cy = rowH * row + cellSize / 2;
+        ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, r, r, 0, 0, Math.PI * 2);
         ctx.fill();
         if (artistic) ctx.stroke();
       }
@@ -81,6 +118,14 @@ export function renderMosaic(quantizedGrid, gridW, gridH, shape, cellSize, bgCol
         ctx.beginPath();
         ctx.ellipse(x0 + cellSize / 2, y0 + cellSize / 2,
                      cellSize / 2 - pad, cellSize / 2 - pad, 0, 0, Math.PI * 2);
+        ctx.fill();
+        if (artistic) ctx.stroke();
+      } else if (shape === "diamond") {
+        const pad = cellSize * 0.04;
+        const corners = diamondCorners(x0, y0, x0 + cellSize, y0 + cellSize, pad);
+        ctx.beginPath();
+        corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+        ctx.closePath();
         ctx.fill();
         if (artistic) ctx.stroke();
       } else {
@@ -141,13 +186,16 @@ export function renderBrickMosaic(bricks, cellSize, bgColor, createCanvasFn,
  * Render page 1: an outlined grid where every cell shows the number of its
  * palette color (1-indexed -- "Color #1", matching the numbering used
  * everywhere else in the app) instead of the color itself. Uses the same
- * square/circle/hexagon layout geometry as renderMosaic so the sheet lines
- * up with the full-color render.
+ * square/circle/diamond/hexagon layout geometry as renderMosaic so the
+ * sheet lines up with the full-color render.
  */
 export function renderPaintByNumber(quantizedGrid, gridW, gridH, palette, shape, cellSize,
                                      createCanvasFn, options = {}) {
-  const { bgColor = [255, 255, 255], lineColor = [90, 90, 90], textColor = [20, 20, 20] } = options;
-  const [imgW, imgH] = estimateOutputDimensions(gridW, gridH, shape, cellSize);
+  const {
+    bgColor = [255, 255, 255], lineColor = [90, 90, 90], textColor = [20, 20, 20],
+    circleInterlock = false,
+  } = options;
+  const [imgW, imgH] = estimateOutputDimensions(gridW, gridH, shape, cellSize, circleInterlock);
   const canvas = createCanvasFn(imgW, imgH);
   const ctx = canvas.getContext("2d");
 
@@ -165,15 +213,15 @@ export function renderPaintByNumber(quantizedGrid, gridW, gridH, palette, shape,
 
   if (shape === "hexagon") {
     const hexSize = cellSize * 0.58;
-    const hexW = Math.sqrt(3) * hexSize;
-    const hexH = 1.5 * hexSize;
+    const colW = 1.5 * hexSize;
+    const rowH = Math.sqrt(3) * hexSize;
     ctx.lineWidth = 1.5;
     for (let row = 0; row < gridH; row++) {
-      const rowOffset = row % 2 === 1 ? hexW / 2 : 0;
       for (let col = 0; col < gridW; col++) {
         const rgb = cellAt(row, col);
-        const cx = hexW * col + rowOffset + cellSize / 2;
-        const cy = hexH * row + cellSize / 2;
+        const colOffset = col % 2 === 1 ? rowH / 2 : 0;
+        const cx = colW * col + cellSize / 2;
+        const cy = rowH * row + colOffset + cellSize / 2;
         const corners = hexCorners(cx, cy, hexSize);
         ctx.beginPath();
         corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
@@ -186,7 +234,30 @@ export function renderPaintByNumber(quantizedGrid, gridW, gridH, palette, shape,
     return canvas;
   }
 
-  // square & circle share a plain grid layout for the printable sheet too
+  if (shape === "circle" && circleInterlock) {
+    const colW = cellSize;
+    const rowH = cellSize * (Math.sqrt(3) / 2);
+    const r = cellSize / 2 - cellSize * 0.04;
+    ctx.lineWidth = 1;
+    for (let row = 0; row < gridH; row++) {
+      const rowOffset = row % 2 === 1 ? colW / 2 : 0;
+      for (let col = 0; col < gridW; col++) {
+        const rgb = cellAt(row, col);
+        const cx = colW * col + rowOffset + cellSize / 2;
+        const cy = rowH * row + cellSize / 2;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, r, r, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        const number = numberLookup.get(rgbToHex(rgb));
+        if (number !== undefined) ctx.fillText(String(number), cx, cy);
+      }
+    }
+    return canvas;
+  }
+
+  // square, circle (stacked) & diamond share a plain grid layout for the
+  // printable sheet too -- the outline is always a plain square box (the
+  // actual tile shape doesn't matter for a fill-in-the-number sheet)
   ctx.lineWidth = 1;
   for (let row = 0; row < gridH; row++) {
     for (let col = 0; col < gridW; col++) {
