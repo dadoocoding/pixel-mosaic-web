@@ -11,7 +11,7 @@
  */
 
 /** RGB (0-255) -> HSL (h, s, l each 0-1). */
-function rgbToHsl(r, g, b) {
+export function rgbToHsl(r, g, b) {
   r /= 255; g /= 255; b /= 255;
   const max = Math.max(r, g, b), min = Math.min(r, g, b);
   const l = (max + min) / 2;
@@ -27,7 +27,7 @@ function rgbToHsl(r, g, b) {
 }
 
 /** HSL (each 0-1) -> RGB (0-255, not rounded). */
-function hslToRgb(h, s, l) {
+export function hslToRgb(h, s, l) {
   if (s < 1e-12) return [l * 255, l * 255, l * 255];
   const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
   const p = 2 * l - q;

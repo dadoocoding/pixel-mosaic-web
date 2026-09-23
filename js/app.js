@@ -23,6 +23,7 @@ import {
   renderRubiksKey, rubiksCubeCount,
 } from "./core/rubiks.js";
 import { renderMetaMosaic } from "./core/meta.js";
+import { renderFoundObjectMosaic } from "./core/foundobject.js";
 import { DMC_RGB_PALETTE } from "./core/dmc.js";
 import {
   dmcColorCounts, crossStitchSymbolMap, renderCrossStitchMosaic,
@@ -89,6 +90,8 @@ const state = {
   renderedGridW: 40,
   renderedGridH: 40,
   adaptiveSensitivity: 55,
+  adaptiveRectangles: false, // true = split on one axis at a time (elongated
+                              // rectangular tiles) instead of always quartering
   adaptiveLeaves: null,
   dieColor: [20, 20, 24],
   pipColor: [235, 235, 235],
@@ -101,6 +104,16 @@ const state = {
   tintStrength: 85,      // 0-100; Meta mode's hue/tint overlay strength
 
   crossStitchGrid: null, // flat [r,g,b] array, row-major, DMC-quantized
+
+  // Found Object mode: quantizes like Classic mode, then lets any one of
+  // the resulting palette colors be replaced with a user-uploaded photo.
+  // foundObjectImages/-Names are keyed by "r,g,b" color string.
+  foundObjectNumColors: 12,
+  foundObjectTintStrength: 60,  // 0-100, same meaning as tintStrength above
+  foundObjectQuantizedGrid: null,
+  foundObjectPalette: null,
+  foundObjectImages: new Map(),  // "r,g,b" -> source canvas (the uploaded photo)
+  foundObjectImageNames: new Map(), // "r,g,b" -> uploaded file name, for the summary
 };
 
 const brickSizeSelections = new Map(LEGO_BRICK_SIZES.map(([w, h]) => [`${w}x${h}`, true]));
@@ -125,7 +138,7 @@ const el = {
   bgColorBtn: $("bgColorBtn"), bgColorPicker: $("bgColorPicker"),
   layoutModeSeg: $("layoutModeSeg"),
   classicPanel: $("classicPanel"), adaptivePanel: $("adaptivePanel"), dicePanel: $("dicePanel"),
-  rubiksPanel: $("rubiksPanel"), metaPanel: $("metaPanel"),
+  rubiksPanel: $("rubiksPanel"), metaPanel: $("metaPanel"), foundobjectPanel: $("foundobjectPanel"),
   colorSourceSeg: $("colorSourceSeg"), colorsLabel: $("colorsLabel"),
   numColors: $("numColors"), numColorsVal: $("numColorsVal"),
   fixedPaletteLabel: $("fixedPaletteLabel"), choosePaletteBtn: $("choosePaletteBtn"),
@@ -135,6 +148,7 @@ const el = {
   edgeSensitivity: $("edgeSensitivity"), edgeSensitivityVal: $("edgeSensitivityVal"),
   generateBtn: $("generateBtn"), paletteBtn: $("paletteBtn"), sampleSheetBtn: $("sampleSheetBtn"),
   adaptiveSensitivity: $("adaptiveSensitivity"), adaptiveSensitivityVal: $("adaptiveSensitivityVal"),
+  adaptiveRectangles: $("adaptiveRectangles"),
   adaptiveGenerateBtn: $("adaptiveGenerateBtn"), exportAdaptiveTilesBtn: $("exportAdaptiveTilesBtn"),
   exportAdaptiveShoppingBtn: $("exportAdaptiveShoppingBtn"),
   dieColorBtn: $("dieColorBtn"), dieColorPicker: $("dieColorPicker"),
@@ -151,6 +165,10 @@ const el = {
   crossstitchPanel: $("crossstitchPanel"), crossstitchGenerateBtn: $("crossstitchGenerateBtn"),
   exportCrossStitchPatternBtn: $("exportCrossStitchPatternBtn"),
   exportCrossStitchShoppingBtn: $("exportCrossStitchShoppingBtn"),
+  foundObjectNumColors: $("foundObjectNumColors"), foundObjectNumColorsVal: $("foundObjectNumColorsVal"),
+  foundObjectTintStrength: $("foundObjectTintStrength"), foundObjectTintStrengthVal: $("foundObjectTintStrengthVal"),
+  foundObjectGenerateBtn: $("foundObjectGenerateBtn"),
+  foundObjectLibraryBtn: $("foundObjectLibraryBtn"), foundObjectSummary: $("foundObjectSummary"),
   optimizeBricksBtn: $("optimizeBricksBtn"), brickSummary: $("brickSummary"),
   exportBricksJsonBtn: $("exportBricksJsonBtn"), exportBricksCsvBtn: $("exportBricksCsvBtn"),
   exportShoppingListBtn: $("exportShoppingListBtn"),
@@ -479,6 +497,11 @@ function applyLoadedImage(canvas, displayName) {
   state.dicePipGrid = null;
   state.rubiksGrid = null;
   state.crossStitchGrid = null;
+  state.foundObjectQuantizedGrid = null;
+  state.foundObjectPalette = null;
+  state.foundObjectImages = new Map();
+  state.foundObjectImageNames = new Map();
+  el.foundObjectSummary.textContent = "";
   state.renderedMode = state.layoutMode;
   clearBrickLayout();
   disableGenerationDependentButtons();
@@ -488,6 +511,7 @@ function applyLoadedImage(canvas, displayName) {
   el.rubiksGenerateBtn.disabled = false;
   el.metaGenerateBtn.disabled = false;
   el.crossstitchGenerateBtn.disabled = false;
+  el.foundObjectGenerateBtn.disabled = false;
   resetSampleDisplay();
 
   if (el.lockAspect.checked) syncHeightToAspect();
@@ -820,6 +844,7 @@ function setLayoutMode(mode) {
   el.rubiksPanel.hidden = mode !== "rubiks";
   el.metaPanel.hidden = mode !== "meta";
   el.crossstitchPanel.hidden = mode !== "crossstitch";
+  el.foundobjectPanel.hidden = mode !== "foundobject";
   // Rubik's Cube mode sizes itself in cube units (cubesWide/cubesTall)
   // rather than the shared cell-based Grid width/height sliders every
   // other mode uses -- hide those to avoid showing two unrelated size
@@ -844,6 +869,19 @@ el.monoColorPicker.addEventListener("input", () => {
 el.adaptiveSensitivity.addEventListener("input", () => {
   el.adaptiveSensitivityVal.textContent = el.adaptiveSensitivity.value;
   state.adaptiveSensitivity = parseInt(el.adaptiveSensitivity.value, 10);
+});
+el.adaptiveRectangles.addEventListener("change", () => {
+  state.adaptiveRectangles = el.adaptiveRectangles.checked;
+});
+
+el.foundObjectNumColors.addEventListener("input", () => {
+  el.foundObjectNumColorsVal.textContent = el.foundObjectNumColors.value;
+  state.foundObjectNumColors = parseInt(el.foundObjectNumColors.value, 10);
+});
+el.foundObjectTintStrength.addEventListener("input", () => {
+  el.foundObjectTintStrengthVal.textContent = el.foundObjectTintStrength.value;
+  state.foundObjectTintStrength = parseInt(el.foundObjectTintStrength.value, 10);
+  if (state.foundObjectQuantizedGrid) rerenderFoundObjectMosaic();
 });
 
 el.dieColorBtn.addEventListener("click", () => el.dieColorPicker.click());
@@ -985,6 +1023,7 @@ function disableGenerationDependentButtons() {
   el.exportRubiksShoppingBtn.disabled = true;
   el.exportCrossStitchPatternBtn.disabled = true;
   el.exportCrossStitchShoppingBtn.disabled = true;
+  el.foundObjectLibraryBtn.disabled = true;
 }
 
 function clearBrickLayout() {
@@ -1009,6 +1048,7 @@ async function generateAdaptiveMosaic() {
   const gridH = parseInt(el.gridHeight.value, 10);
   const cellSize = parseInt(el.cellSize.value, 10);
   const sensitivity = state.adaptiveSensitivity;
+  const allowRectangles = state.adaptiveRectangles;
 
   el.adaptiveGenerateBtn.disabled = true;
   el.adaptiveGenerateBtn.textContent = "Generating...";
@@ -1016,7 +1056,7 @@ async function generateAdaptiveMosaic() {
 
   try {
     const grid = imageToGrid(state.sourceCanvas, gridW, gridH);
-    const leaves = buildQuadtree(grid, gridW, gridH, sensitivity);
+    const leaves = buildQuadtree(grid, gridW, gridH, sensitivity, allowRectangles);
     const outputCanvas = renderAdaptiveMosaic(leaves, gridW, gridH, cellSize, state.bgColor, makeCanvas);
 
     state.adaptiveLeaves = leaves;
@@ -1371,6 +1411,177 @@ el.exportCrossStitchShoppingBtn.addEventListener("click", () => {
     "cross_stitch_shopping_list.csv", "text/csv");
   setStatus("Saved cross_stitch_shopping_list.csv");
 });
+
+// ---------------------------------------------------------------------------
+// Generate -- Found Object (quantize, then swap any color for a user photo)
+// ---------------------------------------------------------------------------
+
+el.foundObjectGenerateBtn.addEventListener("click", generateFoundObjectMosaic);
+
+async function generateFoundObjectMosaic() {
+  if (!state.sourceCanvas) { setStatus("Load an image first."); return; }
+
+  const gridW = parseInt(el.gridWidth.value, 10);
+  const gridH = parseInt(el.gridHeight.value, 10);
+  const numColors = parseInt(el.foundObjectNumColors.value, 10) || null;
+  const cellSize = parseInt(el.cellSize.value, 10);
+
+  el.foundObjectGenerateBtn.disabled = true;
+  el.foundObjectGenerateBtn.textContent = "Generating...";
+  setStatus("Crunching colors, this can take a few seconds for larger grids...");
+
+  try {
+    const grid = imageToGrid(state.sourceCanvas, gridW, gridH);
+    const result = await callWorker("quantize-auto", { points: grid, nColors: numColors });
+    const palette = result.palette;
+    const quantizedFlat = Array.from(result.labels).map(l => palette[l]);
+
+    // A fresh generate (new grid size/color count) invalidates any photo
+    // assignments from a previous palette -- those keys almost certainly
+    // don't match the new palette's colors, so start the library over
+    // rather than silently keeping stale, invisible assignments around.
+    state.foundObjectImages = new Map();
+    state.foundObjectImageNames = new Map();
+
+    state.gridW = gridW;
+    state.gridH = gridH;
+    state.foundObjectQuantizedGrid = quantizedFlat;
+    state.foundObjectPalette = palette;
+    state.renderedMode = "foundobject";
+    state.renderedCellSize = cellSize;
+    state.renderedGridW = gridW;
+    state.renderedGridH = gridH;
+    resetSampleDisplay();
+
+    rerenderFoundObjectMosaic();
+
+    el.exportPngBtn.disabled = false;
+    el.foundObjectLibraryBtn.disabled = false;
+    updateFoundObjectSummary();
+    clearBrickLayout();
+
+    setViewMode("output");
+    setStatus(`Done — ${palette.length} colors, ${gridW}×${gridH} grid. Assign photos to colors below.`);
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    el.foundObjectGenerateBtn.disabled = false;
+    el.foundObjectGenerateBtn.textContent = "Generate Mosaic";
+  }
+}
+
+/** Re-composite the Found Object output canvas from the current quantized
+ * grid + whatever photos are currently assigned -- called after Generate,
+ * after any photo is assigned/cleared, and when the tint-strength slider
+ * moves. Cheap enough to run on every change, same as Classic mode's
+ * palette-edit re-render. */
+function rerenderFoundObjectMosaic() {
+  if (!state.foundObjectQuantizedGrid) return;
+  const { renderedGridW: gridW, renderedGridH: gridH, renderedCellSize: cellSize } = state;
+  const tintStrength = state.foundObjectTintStrength / 100;
+  state.outputCanvas = renderFoundObjectMosaic(
+    state.foundObjectQuantizedGrid, gridW, gridH, cellSize, state.bgColor,
+    state.foundObjectImages, tintStrength, makeCanvas);
+  if (state.viewMode === "output") refreshPreview(false);
+}
+
+function updateFoundObjectSummary() {
+  const n = state.foundObjectImages.size;
+  const total = state.foundObjectPalette ? state.foundObjectPalette.length : 0;
+  el.foundObjectSummary.textContent = n === 0
+    ? `No photos assigned yet — all ${total} colors show as plain squares.`
+    : `${n} of ${total} colors have an assigned photo.`;
+}
+
+el.foundObjectLibraryBtn.addEventListener("click", openFoundObjectLibrary);
+
+function openFoundObjectLibrary() {
+  if (!state.foundObjectPalette) return;
+  const body = document.createElement("div");
+
+  state.foundObjectPalette.forEach((rgb, i) => {
+    const key = rgb.join(",");
+    const row = document.createElement("div");
+    row.className = "swatch-row";
+
+    const idxLabel = document.createElement("span");
+    idxLabel.className = "idx-label";
+    idxLabel.textContent = `#${i + 1}`;
+
+    const swatch = document.createElement("div");
+    swatch.className = "mini-swatch";
+    swatch.style.background = rgbToHex(rgb);
+    swatch.title = rgbToHex(rgb);
+
+    const thumb = document.createElement("img");
+    thumb.className = "fo-thumb";
+    const existingCanvas = state.foundObjectImages.get(key);
+    if (existingCanvas) thumb.src = existingCanvas.toDataURL("image/png");
+
+    const label = document.createElement("span");
+    label.className = "fo-label";
+    label.textContent = state.foundObjectImageNames.get(key) || "No photo assigned";
+
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = "image/*";
+    fileInput.hidden = true;
+
+    const uploadBtn = document.createElement("button");
+    uploadBtn.type = "button";
+    uploadBtn.className = "fo-upload";
+    uploadBtn.textContent = "Upload...";
+    uploadBtn.addEventListener("click", () => fileInput.click());
+
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "fo-clear";
+    clearBtn.textContent = "Clear";
+    clearBtn.disabled = !existingCanvas;
+    clearBtn.addEventListener("click", () => {
+      state.foundObjectImages.delete(key);
+      state.foundObjectImageNames.delete(key);
+      thumb.removeAttribute("src");
+      label.textContent = "No photo assigned";
+      clearBtn.disabled = true;
+      rerenderFoundObjectMosaic();
+      updateFoundObjectSummary();
+    });
+
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files[0];
+      fileInput.value = "";
+      if (!file) return;
+      try {
+        const bitmap = await createImageBitmap(file);
+        const canvas = makeCanvas(bitmap.width, bitmap.height);
+        canvas.getContext("2d").drawImage(bitmap, 0, 0);
+        state.foundObjectImages.set(key, canvas);
+        state.foundObjectImageNames.set(key, file.name);
+        thumb.src = canvas.toDataURL("image/png");
+        label.textContent = file.name;
+        clearBtn.disabled = false;
+        rerenderFoundObjectMosaic();
+        updateFoundObjectSummary();
+      } catch (err) {
+        setStatus(`Couldn't open that photo: ${err.message}`);
+      }
+    });
+
+    row.append(idxLabel, swatch, thumb, label, uploadBtn, clearBtn, fileInput);
+    body.appendChild(row);
+  });
+
+  showDialog({
+    title: "Assign Photos to Colors",
+    desc: `${state.foundObjectPalette.length} colors — upload a photo of a real `
+      + "object that color to use it in place of the flat square, or leave it blank.",
+    bodyEl: body,
+    actions: [{ label: "Close", primary: true, onClick: closeDialog }],
+    wide: true,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Dialog helper
@@ -1979,6 +2190,7 @@ function collectSettings() {
       brickSizeSelections: Object.fromEntries(brickSizeSelections),
 
       adaptiveSensitivity: parseInt(el.adaptiveSensitivity.value, 10),
+      adaptiveRectangles: el.adaptiveRectangles.checked,
 
       dieColor: rgbToHex(state.dieColor),
       pipColor: rgbToHex(state.pipColor),
@@ -1988,6 +2200,12 @@ function collectSettings() {
       lockAspectRubiks: el.lockAspectRubiks.checked,
 
       tintStrength: parseInt(el.tintStrength.value, 10),
+
+      // Found Object mode's per-color photo assignments aren't included --
+      // they're uploaded image files, not JSON-friendly data -- so only
+      // its two sliders round-trip; re-assign photos after importing.
+      foundObjectNumColors: parseInt(el.foundObjectNumColors.value, 10),
+      foundObjectTintStrength: parseInt(el.foundObjectTintStrength.value, 10),
     },
   };
 }
@@ -2041,6 +2259,10 @@ function applySettings(data) {
     el.adaptiveSensitivityVal.textContent = s.adaptiveSensitivity;
     state.adaptiveSensitivity = s.adaptiveSensitivity;
   }
+  if (typeof s.adaptiveRectangles === "boolean") {
+    el.adaptiveRectangles.checked = s.adaptiveRectangles;
+    state.adaptiveRectangles = s.adaptiveRectangles;
+  }
 
   if (s.dieColor) { state.dieColor = hexToRgb(s.dieColor); setSwatchButton(el.dieColorBtn, state.dieColor); el.dieColorPicker.value = s.dieColor; }
   if (s.pipColor) { state.pipColor = hexToRgb(s.pipColor); setSwatchButton(el.pipColorBtn, state.pipColor); el.pipColorPicker.value = s.pipColor; }
@@ -2053,6 +2275,17 @@ function applySettings(data) {
     el.tintStrength.value = s.tintStrength;
     el.tintStrengthVal.textContent = s.tintStrength;
     state.tintStrength = s.tintStrength;
+  }
+
+  if (Number.isFinite(s.foundObjectNumColors)) {
+    el.foundObjectNumColors.value = s.foundObjectNumColors;
+    el.foundObjectNumColorsVal.textContent = s.foundObjectNumColors;
+    state.foundObjectNumColors = s.foundObjectNumColors;
+  }
+  if (Number.isFinite(s.foundObjectTintStrength)) {
+    el.foundObjectTintStrength.value = s.foundObjectTintStrength;
+    el.foundObjectTintStrengthVal.textContent = s.foundObjectTintStrength;
+    state.foundObjectTintStrength = s.foundObjectTintStrength;
   }
 
   // Layout mode last, once every mode's own controls are already in place.

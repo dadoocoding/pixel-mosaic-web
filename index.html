@@ -63,6 +63,7 @@
       <button data-layout="rubiks" type="button">Rubik's Cube</button>
       <button data-layout="meta" type="button">Meta</button>
       <button data-layout="crossstitch" type="button">Cross-Stitch</button>
+      <button data-layout="foundobject" type="button">Found Object</button>
     </div>
 
     <div id="classicPanel">
@@ -123,6 +124,8 @@
     <div id="adaptivePanel" hidden>
       <label for="adaptiveSensitivity">Detail sensitivity <span class="hint-inline">(higher = more/smaller tiles)</span></label>
       <div class="slider-row"><input type="range" id="adaptiveSensitivity" min="0" max="100" value="55"><span class="slider-val" id="adaptiveSensitivityVal">55</span></div>
+
+      <label class="checkbox-label"><input type="checkbox" id="adaptiveRectangles"> Allow rectangular tiles <span class="hint-inline">(elongated strips instead of square-ish blocks)</span></label>
 
       <div class="button-row"><button id="adaptiveGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
 
@@ -191,6 +194,26 @@
       <label>Export</label>
       <div class="button-row"><button id="exportCrossStitchPatternBtn" disabled>Save Pattern Chart (PDF)</button></div>
       <div class="button-row"><button id="exportCrossStitchShoppingBtn" disabled>Save Floss Shopping List (CSV)</button></div>
+    </div>
+
+    <div id="foundobjectPanel" hidden>
+      <p class="hint">Quantizes the image to a small set of colors, then
+        lets you replace any one of those colors with your own photo &mdash;
+        a photo of a blue shirt button standing in for every "blue" cell,
+        say &mdash; tinted so it still reads as that color from a distance.
+        A color with no photo assigned shows as a plain square.</p>
+
+      <label for="foundObjectNumColors">Number of colors (0 = auto)</label>
+      <div class="slider-row"><input type="range" id="foundObjectNumColors" min="0" max="48" value="12"><span class="slider-val" id="foundObjectNumColorsVal">12</span></div>
+
+      <label for="foundObjectTintStrength">Tint strength <span class="hint-inline">(0 = photo's own color, 100 = fully matched to the target color)</span></label>
+      <div class="slider-row"><input type="range" id="foundObjectTintStrength" min="0" max="100" value="60"><span class="slider-val" id="foundObjectTintStrengthVal">60</span></div>
+
+      <div class="button-row"><button id="foundObjectGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <label>Found-object photos</label>
+      <div class="button-row"><button id="foundObjectLibraryBtn" disabled>Assign Photos to Colors...</button></div>
+      <p class="hint" id="foundObjectSummary"></p>
     </div>
 
     <!-- Save Image (PNG) -- shared by all layout modes, always sits right

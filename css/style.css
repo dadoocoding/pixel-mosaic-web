@@ -156,6 +156,26 @@ button.primary:hover:not(:disabled) { background: var(--accent-hover); }
 .segmented button:last-child { border-right: none; }
 .segmented button.active { background: var(--accent); font-weight: 600; }
 
+/* Layout mode picker gets its own wrapping grid instead of one packed row --
+   there are too many modes now (Classic/Adaptive/Dice/Rubik's/Meta/
+   Cross-Stitch/Found Object) to stay legible squeezed onto a single line.
+   Each button keeps its own border+radius (rather than the shared-border
+   "segmented control" look) since they're no longer visually one strip. */
+#layoutModeSeg {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+}
+#layoutModeSeg button {
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+#layoutModeSeg button.active { background: var(--accent); font-weight: 600; }
+
 /* ---- Color swatch buttons ---- */
 .color-swatch-btn {
   width: 100%;
@@ -326,6 +346,32 @@ button.primary:hover:not(:disabled) { background: var(--accent-hover); }
   color: var(--text-dim);
   font-size: 11.5px;
   flex-shrink: 0;
+}
+
+/* ---- Found Object library dialog ---- */
+.swatch-row .fo-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  flex-shrink: 0;
+}
+.swatch-row .fo-label {
+  flex: 1;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swatch-row .fo-upload, .swatch-row .fo-clear {
+  flex: none;
+  width: auto;
+  padding: 5px 9px;
+  font-size: 11.5px;
 }
 
 .checklist-grid {

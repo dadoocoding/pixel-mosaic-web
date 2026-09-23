@@ -19,13 +19,52 @@ function luminance(r, g, b) {
   return 0.299 * r + 0.587 * g + 0.114 * b;
 }
 
+/** For a rectangular slice of the luminance grid, returns [rowVariance,
+ * colVariance]: the variance of the row-mean profile (brightness change
+ * top-to-bottom) and of the column-mean profile (brightness change
+ * left-to-right). Whichever is higher marks the axis worth cutting across
+ * -- used by buildQuadtree's allowRectangles mode to pick a single split
+ * axis instead of always quartering. */
+function axisVariances(lum, gridW, x, y, w, h) {
+  const rowMeans = new Float64Array(h);
+  for (let ry = 0; ry < h; ry++) {
+    const base = (y + ry) * gridW + x;
+    let s = 0;
+    for (let rx = 0; rx < w; rx++) s += lum[base + rx];
+    rowMeans[ry] = s / w;
+  }
+  const colMeans = new Float64Array(w);
+  for (let rx = 0; rx < w; rx++) {
+    let s = 0;
+    for (let ry = 0; ry < h; ry++) s += lum[(y + ry) * gridW + x + rx];
+    colMeans[rx] = s / h;
+  }
+  const variance = (arr) => {
+    let m = 0;
+    for (let i = 0; i < arr.length; i++) m += arr[i];
+    m /= arr.length;
+    let sq = 0;
+    for (let i = 0; i < arr.length; i++) { const d = arr[i] - m; sq += d * d; }
+    return sq / arr.length;
+  };
+  return [variance(rowMeans), variance(colMeans)];
+}
+
 /**
  * grid: flat [r,g,b] array from imageToGrid (grid.js), row-major, length
  * gridW*gridH. Returns a flat list of leaf tiles: { x, y, w, h, rgb } in
  * grid CELL units (multiply by cellSize to get output pixels, same
  * convention as every other render function in this project).
+ *
+ * allowRectangles: when false (default, original behavior), a splitting
+ * region is always quartered -- cut on both axes at once -- keeping every
+ * tile close to square. When true, a splitting region is instead cut on a
+ * single axis at a time (whichever of top-to-bottom or left-to-right shows
+ * more brightness change, see axisVariances), so a tile can stay elongated
+ * in the direction it's actually uniform in -- long rectangular tiles of
+ * varying size, instead of uniform squares.
  */
-export function buildQuadtree(grid, gridW, gridH, sensitivity = 55) {
+export function buildQuadtree(grid, gridW, gridH, sensitivity = 55, allowRectangles = false) {
   const n = gridW * gridH;
   const lum = new Float64Array(n);
   for (let i = 0; i < n; i++) {
@@ -83,9 +122,30 @@ export function buildQuadtree(grid, gridW, gridH, sensitivity = 55) {
     });
   }
 
+  function splitW(x, y, w, h) {
+    const w1 = w >> 1;
+    split(x, y, w1, h);
+    split(x + w1, y, w - w1, h);
+  }
+  function splitH(x, y, w, h) {
+    const h1 = h >> 1;
+    split(x, y, w, h1);
+    split(x, y + h1, w, h - h1);
+  }
+
   function split(x, y, w, h) {
     if (w <= 1 && h <= 1) { makeLeaf(x, y, w, h); return; }
     if (regionVariance(x, y, w, h) <= threshold) { makeLeaf(x, y, w, h); return; }
+
+    if (allowRectangles) {
+      if (w <= 1) { splitH(x, y, w, h); return; }
+      if (h <= 1) { splitW(x, y, w, h); return; }
+      const [rowVar, colVar] = axisVariances(lum, gridW, x, y, w, h);
+      if (rowVar >= colVar) splitH(x, y, w, h);
+      else splitW(x, y, w, h);
+      return;
+    }
+
     if (w > 1 && h > 1) {
       const w1 = w >> 1, h1 = h >> 1;
       split(x, y, w1, h1);
@@ -93,13 +153,9 @@ export function buildQuadtree(grid, gridW, gridH, sensitivity = 55) {
       split(x, y + h1, w1, h - h1);
       split(x + w1, y + h1, w - w1, h - h1);
     } else if (w > 1) {
-      const w1 = w >> 1;
-      split(x, y, w1, h);
-      split(x + w1, y, w - w1, h);
+      splitW(x, y, w, h);
     } else {
-      const h1 = h >> 1;
-      split(x, y, w, h1);
-      split(x, y + h1, w, h - h1);
+      splitH(x, y, w, h);
     }
   }
 
