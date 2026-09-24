@@ -9,8 +9,7 @@
  * pip-layout convention).
  *
  * Pip/gray grids use the same flat, row-major convention as every other
- * grid in this project (e.g. edges.js's edgeMask): length gridW*gridH,
- * index = row*gridW + col.
+ * grid in this project: length gridW*gridH, index = row*gridW + col.
  */
 
 // Standard Western dice pip layout: one fixed orientation per "handed"

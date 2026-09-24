@@ -113,10 +113,6 @@
       <label class="checkbox-label" id="circleInterlockLabel" hidden><input type="checkbox" id="circleInterlock"> Interlock alternating rows (nest circles instead of stacking)</label>
       <label class="checkbox-label" id="diamondInterlockLabel" hidden><input type="checkbox" id="diamondInterlock"> Interlock alternating rows (nest diamonds edge-to-edge instead of stacking)</label>
 
-      <label class="checkbox-label"><input type="checkbox" id="artisticStyle"> Artistic style (grid lines + edge outlines)</label>
-      <label for="edgeSensitivity" class="sub-label">Edge sensitivity (higher = more outlining)</label>
-      <div class="slider-row"><input type="range" id="edgeSensitivity" min="0" max="100" value="55"><span class="slider-val" id="edgeSensitivityVal">55</span></div>
-
       <div class="button-row"><button id="generateBtn" class="primary" disabled>Generate Mosaic</button></div>
 
       <div class="button-row"><button id="paletteBtn" disabled>Edit Color Palette...</button></div>
@@ -285,6 +281,20 @@
       <label>Found-object photos</label>
       <div class="button-row"><button id="foundObjectLibraryBtn" disabled>Assign Photos to Colors...</button></div>
       <p class="hint" id="foundObjectSummary"></p>
+
+      <label>Export</label>
+      <div class="button-row two-up">
+        <button id="previewFoundObjectJsonBtn" disabled>Preview...</button>
+        <button id="exportFoundObjectJsonBtn" disabled>Save Object Data (JSON)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewFoundObjectCsvBtn" disabled>Preview...</button>
+        <button id="exportFoundObjectCsvBtn" disabled>Save Object Data (CSV)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewFoundObjectPdfBtn" disabled>Preview...</button>
+        <button id="exportFoundObjectPdfBtn" disabled>Save Build Guide (PDF)</button>
+      </div>
     </div>
 
     <!-- Preview / Save Image (PNG) -- shared by all layout modes, always

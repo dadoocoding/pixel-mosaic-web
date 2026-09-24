@@ -7,8 +7,7 @@ import { rgbToHex, hexToRgb, contrastTextColor } from "./core/color.js";
 import { buildMonochromePalette } from "./core/quantize.js";
 import { imageToGrid } from "./core/grid.js";
 import { renderMosaic, renderBrickMosaic, estimateOutputDimensions, renderPaintByNumber, renderColorKey } from "./core/render.js";
-import { hexHitTest, circleInterlockHitTest, diamondInterlockHitTest, interlockRowHeightFactor } from "./core/shapes.js";
-import { computeEdgeMask } from "./core/edges.js";
+import { hexHitTest, circleInterlockHitTest, diamondInterlockHitTest, interlockRowHeightFactor, shapeColumnWidthFactor } from "./core/shapes.js";
 import { splitIntoPanels } from "./core/panels.js";
 import { LEGO_BRICK_SIZES, footprintLabel } from "./core/bricks.js";
 import { colorCounts } from "./core/colorCounts.js";
@@ -79,9 +78,6 @@ const state = {
                            // packed tighter so circles nest instead of stack
   diamondInterlock: false, // "diamond" shape only: same idea, but diamonds
                             // pack edge-to-edge with zero gaps
-  artistic: false,
-  edgeSensitivity: 55,
-  edgeMask: null,
   brickLayout: null,
   brickCanvas: null,
   sampledHex: null,
@@ -158,8 +154,6 @@ const el = {
   shapeSeg: $("shapeSeg"),
   circleInterlock: $("circleInterlock"), circleInterlockLabel: $("circleInterlockLabel"),
   diamondInterlock: $("diamondInterlock"), diamondInterlockLabel: $("diamondInterlockLabel"),
-  artisticStyle: $("artisticStyle"),
-  edgeSensitivity: $("edgeSensitivity"), edgeSensitivityVal: $("edgeSensitivityVal"),
   generateBtn: $("generateBtn"), paletteBtn: $("paletteBtn"), sampleSheetBtn: $("sampleSheetBtn"),
   adaptiveSensitivity: $("adaptiveSensitivity"), adaptiveSensitivityVal: $("adaptiveSensitivityVal"),
   adaptiveRectangles: $("adaptiveRectangles"),
@@ -189,6 +183,9 @@ const el = {
   foundObjectTintStrength: $("foundObjectTintStrength"), foundObjectTintStrengthVal: $("foundObjectTintStrengthVal"),
   foundObjectGenerateBtn: $("foundObjectGenerateBtn"),
   foundObjectLibraryBtn: $("foundObjectLibraryBtn"), foundObjectSummary: $("foundObjectSummary"),
+  exportFoundObjectJsonBtn: $("exportFoundObjectJsonBtn"), previewFoundObjectJsonBtn: $("previewFoundObjectJsonBtn"),
+  exportFoundObjectCsvBtn: $("exportFoundObjectCsvBtn"), previewFoundObjectCsvBtn: $("previewFoundObjectCsvBtn"),
+  exportFoundObjectPdfBtn: $("exportFoundObjectPdfBtn"), previewFoundObjectPdfBtn: $("previewFoundObjectPdfBtn"),
   optimizeBricksBtn: $("optimizeBricksBtn"), brickSummary: $("brickSummary"),
   exportBricksJsonBtn: $("exportBricksJsonBtn"), previewBricksJsonBtn: $("previewBricksJsonBtn"),
   exportBricksCsvBtn: $("exportBricksCsvBtn"), previewBricksCsvBtn: $("previewBricksCsvBtn"),
@@ -519,7 +516,6 @@ function applyLoadedImage(canvas, displayName) {
   state.palette = null;
   state.colorNames = [];
   state.outputCanvas = null;
-  state.edgeMask = null;
   state.adaptiveLeaves = null;
   state.dicePipGrid = null;
   state.rubiksGrid = null;
@@ -687,12 +683,18 @@ function syncHeightToAspect() {
   // Circle/diamond interlock pack rows closer together than a plain grid
   // (see shapes.js's interlockRowHeightFactor), which flattens the
   // *output image* relative to a naive gridHeight = gridWidth * aspect --
-  // dividing by the factor adds back the extra rows interlocking needs to
-  // land on the same image aspect ratio as the source photo.
+  // dividing by the row factor adds back the extra rows interlocking needs
+  // to land on the same image aspect ratio as the source photo. Hexagon's
+  // honeycomb lattice additionally narrows *column* spacing
+  // (shapes.js's shapeColumnWidthFactor), which a row-only adjustment
+  // would miss -- multiplying by the column factor accounts for that too,
+  // so hexagon's Lock Aspect result matches the photo instead of coming
+  // out taller/narrower than intended.
   const interlock = (state.shape === "circle" && state.circleInterlock)
     || (state.shape === "diamond" && state.diamondInterlock);
-  const factor = interlockRowHeightFactor(state.shape, interlock);
-  let h = Math.max(4, Math.round((w * aspect) / factor));
+  const rowFactor = interlockRowHeightFactor(state.shape, interlock);
+  const colFactor = shapeColumnWidthFactor(state.shape);
+  let h = Math.max(4, Math.round((w * aspect * colFactor) / rowFactor));
   h = Math.min(h, GRID_MAX_CELLS);
   el.gridHeight.value = h;
   el.gridHeightVal.textContent = h;
@@ -854,15 +856,34 @@ function updateColorSourceUI() {
 el.shapeSeg.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-shape]");
   if (!btn) return;
-  setShape(btn.dataset.shape);
+  onShapeChange(btn.dataset.shape);
 });
 
-function setShape(shape) {
+/** The pure UI-mutation part of a shape change (toggle the active segment,
+ *  show/hide the interlock checkboxes, refresh the size estimate). Shared
+ *  by the live shape-selector callback (onShapeChange) and by settings
+ *  import, which needs this without the aspect-ratio resync onShapeChange
+ *  also does -- see onShapeChange's comment. */
+function applyShapeUI(shape) {
   state.shape = shape;
   [...el.shapeSeg.children].forEach(b => b.classList.toggle("active", b.dataset.shape === shape));
   el.circleInterlockLabel.hidden = shape !== "circle";
   el.diamondInterlockLabel.hidden = shape !== "diamond";
   updateSizeEstimate();
+}
+
+function onShapeChange(shape) {
+  // Live shape-selector callback: different shapes pack cells at different
+  // effective widths/heights (hexagon's honeycomb lattice especially --
+  // see shapes.js's shapeColumnWidthFactor/interlockRowHeightFactor), so
+  // with Lock Aspect on, switching shape needs the same grid-height resync
+  // interlock toggling already gets (onInterlockChange) or the output
+  // image drifts from the source photo's aspect ratio. Not called during
+  // settings import (which calls applyShapeUI directly): there, gridHeight
+  // is already an explicit, deliberately-saved value that this recompute
+  // would silently clobber.
+  applyShapeUI(shape);
+  if (el.lockAspect.checked && state.sourceCanvas) syncHeightToAspect();
 }
 
 // ---------------------------------------------------------------------------
@@ -879,7 +900,7 @@ function rerenderCurrent(resetView = true) {
   if (state.renderedMode === "classic" && state.quantizedGrid) {
     state.outputCanvas = renderMosaic(state.quantizedGrid, state.renderedGridW, state.renderedGridH,
       state.renderedShape, state.renderedCellSize, state.bgColor, makeCanvas,
-      { artistic: state.artistic, edgeMask: state.edgeMask, circleInterlock: state.renderedCircleInterlock,
+      { circleInterlock: state.renderedCircleInterlock,
         diamondInterlock: state.renderedDiamondInterlock });
     if (state.viewMode === "output") refreshPreview(resetView);
   } else if (state.renderedMode === "adaptive" && state.adaptiveLeaves) {
@@ -945,14 +966,6 @@ function setLayoutMode(mode) {
   updatePhysicalSizeEstimate();
 }
 
-el.artisticStyle.addEventListener("change", () => {
-  state.artistic = el.artisticStyle.checked;
-});
-el.edgeSensitivity.addEventListener("input", () => {
-  el.edgeSensitivityVal.textContent = el.edgeSensitivity.value;
-  state.edgeSensitivity = parseInt(el.edgeSensitivity.value, 10);
-});
-
 el.monoColorBtn.addEventListener("click", () => el.monoColorPicker.click());
 el.monoColorPicker.addEventListener("input", () => {
   state.monochromeBaseColor = hexToRgb(el.monoColorPicker.value);
@@ -980,10 +993,11 @@ function onInterlockChange() {
   // Toggling either interlock checkbox changes how many rows are needed
   // to keep the *output image* at the source photo's aspect ratio (see
   // syncHeightToAspect) -- interlocking packs rows closer together, so
-  // more rows are needed to reach the same height. Not wired into
-  // setShape too: that function also runs while restoring imported
-  // settings, where gridHeight is already an explicit, deliberately-saved
-  // value that this recompute would silently clobber.
+  // more rows are needed to reach the same height. This resync also
+  // happens on a live shape change (onShapeChange) for the same reason;
+  // settings import uses applyShapeUI directly to skip it, since
+  // gridHeight there is already an explicit, deliberately-saved value
+  // this recompute would silently clobber.
   if (el.lockAspect.checked && state.sourceCanvas) syncHeightToAspect();
   updateSizeEstimate();
 }
@@ -1066,12 +1080,8 @@ async function generateMosaic() {
       names = null;
     }
 
-    const artistic = state.artistic;
-    const edgeMask = artistic
-      ? computeEdgeMask(state.sourceCanvas, gridW, gridH, state.edgeSensitivity)
-      : null;
     const outputCanvas = renderMosaic(quantizedFlat, gridW, gridH, shape, cellSize, bgColor, makeCanvas,
-      { artistic, edgeMask, circleInterlock, diamondInterlock });
+      { circleInterlock, diamondInterlock });
 
     state.gridW = gridW;
     state.gridH = gridH;
@@ -1086,7 +1096,6 @@ async function generateMosaic() {
     state.renderedGridH = gridH;
     state.renderedMode = "classic";
     state.outputCanvas = outputCanvas;
-    state.edgeMask = edgeMask;
     resetSampleDisplay();
 
     el.exportPngBtn.disabled = false;
@@ -1159,6 +1168,12 @@ function disableGenerationDependentButtons() {
   el.exportCrossStitchShoppingBtn.disabled = true;
   el.previewCrossStitchShoppingBtn.disabled = true;
   el.foundObjectLibraryBtn.disabled = true;
+  el.exportFoundObjectJsonBtn.disabled = true;
+  el.previewFoundObjectJsonBtn.disabled = true;
+  el.exportFoundObjectCsvBtn.disabled = true;
+  el.previewFoundObjectCsvBtn.disabled = true;
+  el.exportFoundObjectPdfBtn.disabled = true;
+  el.previewFoundObjectPdfBtn.disabled = true;
 }
 
 function clearBrickLayout() {
@@ -1800,6 +1815,12 @@ async function generateFoundObjectMosaic() {
     el.exportPngBtn.disabled = false;
     el.exportPreviewBtn.disabled = false;
     el.foundObjectLibraryBtn.disabled = false;
+    el.exportFoundObjectJsonBtn.disabled = false;
+    el.previewFoundObjectJsonBtn.disabled = false;
+    el.exportFoundObjectCsvBtn.disabled = false;
+    el.previewFoundObjectCsvBtn.disabled = false;
+    el.exportFoundObjectPdfBtn.disabled = false;
+    el.previewFoundObjectPdfBtn.disabled = false;
     updateFoundObjectSummary();
     clearBrickLayout();
 
@@ -1927,6 +1948,108 @@ function openFoundObjectLibrary() {
 }
 
 // ---------------------------------------------------------------------------
+// Found Object exports -- JSON/CSV/PDF, same shape as Classic mode's (see
+// exportJson/exportCsv/exportPaintByNumber above) but reporting each
+// color's assigned found-object photo filename via foundObjectColorNames()
+// instead of a hand-typed paint nickname. Found Object mode always renders
+// a plain square grid (no shape selector, no interlock), so "square" is
+// hardcoded wherever these functions need a shape.
+// ---------------------------------------------------------------------------
+
+/** An array parallel to state.foundObjectPalette, giving each color's
+ * assigned found-object photo filename (or "" if that color has no photo
+ * assigned) -- the same shape buildGridJson/buildGridCsv/renderColorKey
+ * already expect for `names` (a plain array of paint nicknames in Classic
+ * mode), so Found Object mode's exports can reuse those functions
+ * unmodified and get each color's photo filename in place of a paint
+ * name. */
+function foundObjectColorNames() {
+  if (!state.foundObjectPalette) return [];
+  return state.foundObjectPalette.map(rgb => state.foundObjectImageNames.get(rgb.join(",")) || "");
+}
+
+el.exportFoundObjectJsonBtn.addEventListener("click", exportFoundObjectJson);
+el.previewFoundObjectJsonBtn.addEventListener("click", () => {
+  if (!state.foundObjectQuantizedGrid) return;
+  const json = buildGridJson(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
+    state.foundObjectPalette, "square",
+    { sourceName: state.sourceFileName, names: foundObjectColorNames(), extraMeta: { mode: "found_object" } });
+  openTextExportPreviewDialog("Preview: Object Data (JSON)", json, exportFoundObjectJson);
+});
+
+function exportFoundObjectJson() {
+  if (!state.foundObjectQuantizedGrid) return;
+  const json = buildGridJson(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
+    state.foundObjectPalette, "square",
+    { sourceName: state.sourceFileName, names: foundObjectColorNames(), extraMeta: { mode: "found_object" } });
+  downloadText(json, "found_object_data.json", "application/json");
+  setStatus("Saved found_object_data.json");
+}
+
+el.exportFoundObjectCsvBtn.addEventListener("click", exportFoundObjectCsv);
+el.previewFoundObjectCsvBtn.addEventListener("click", () => {
+  if (!state.foundObjectQuantizedGrid) return;
+  const names = foundObjectColorNames();
+  const gridCsv = buildGridCsv(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
+    state.foundObjectPalette, names);
+  const colorsCsv = buildPaletteCsv(state.foundObjectQuantizedGrid, state.foundObjectPalette, names);
+  const content = `--- found_object_data.csv (per-cell grid) ---\n${gridCsv}\n`
+    + `--- found_object_data_colors.csv (object totals) ---\n${colorsCsv}`;
+  openTextExportPreviewDialog("Preview: Object Data (CSV)", content, exportFoundObjectCsv);
+});
+
+function exportFoundObjectCsv() {
+  if (!state.foundObjectQuantizedGrid) return;
+  const names = foundObjectColorNames();
+  downloadText(buildGridCsv(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
+    state.foundObjectPalette, names), "found_object_data.csv", "text/csv");
+  downloadText(buildPaletteCsv(state.foundObjectQuantizedGrid, state.foundObjectPalette, names),
+    "found_object_data_colors.csv", "text/csv");
+  setStatus("Saved found_object_data.csv and found_object_data_colors.csv");
+}
+
+el.exportFoundObjectPdfBtn.addEventListener("click", exportFoundObjectPdf);
+el.previewFoundObjectPdfBtn.addEventListener("click", () => {
+  if (!state.foundObjectQuantizedGrid) return;
+  try {
+    const page1 = renderPaintByNumber(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
+      state.foundObjectPalette, "square", state.renderedCellSize, makeCanvas);
+    const names = foundObjectColorNames();
+    const counts = colorCounts(state.foundObjectQuantizedGrid, state.foundObjectPalette, names);
+    const page2 = renderColorKey(state.foundObjectPalette, names, counts, makeCanvas);
+    openPdfExportPreviewDialog("Preview: Build Guide (PDF)", [page1, page2], exportFoundObjectPdf);
+  } catch (err) {
+    setStatus(`Error building object build guide preview: ${err.message}`);
+    console.error(err);
+  }
+});
+
+function exportFoundObjectPdf() {
+  if (!state.foundObjectQuantizedGrid) return;
+  try {
+    const page1 = renderPaintByNumber(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
+      state.foundObjectPalette, "square", state.renderedCellSize, makeCanvas);
+    const names = foundObjectColorNames();
+    const counts = colorCounts(state.foundObjectQuantizedGrid, state.foundObjectPalette, names);
+    const page2 = renderColorKey(state.foundObjectPalette, names, counts, makeCanvas);
+
+    const doc = new jspdf.jsPDF({
+      unit: "px",
+      format: [page1.width, page1.height],
+      orientation: page1.width >= page1.height ? "landscape" : "portrait",
+    });
+    doc.addImage(page1.toDataURL("image/png"), "PNG", 0, 0, page1.width, page1.height);
+    doc.addPage([page2.width, page2.height], page2.width >= page2.height ? "landscape" : "portrait");
+    doc.addImage(page2.toDataURL("image/png"), "PNG", 0, 0, page2.width, page2.height);
+    doc.save("found_object_build_guide.pdf");
+    setStatus("Saved found_object_build_guide.pdf (2 pages)");
+  } catch (err) {
+    setStatus(`Error building object build guide PDF: ${err.message}`);
+    console.error(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Dialog helper
 // ---------------------------------------------------------------------------
 
@@ -2037,7 +2160,8 @@ function editPaletteColor(idx, newRgb) {
   state.palette[idx] = newRgb;
   state.outputCanvas = renderMosaic(state.quantizedGrid, state.gridW, state.gridH,
     state.renderedShape, state.renderedCellSize, state.bgColor, makeCanvas,
-    { artistic: state.artistic, edgeMask: state.edgeMask });
+    { circleInterlock: state.renderedCircleInterlock,
+      diamondInterlock: state.renderedDiamondInterlock });
   if (state.viewMode === "output") refreshPreview(false);
   setStatus(`Updated Color #${idx + 1} to ${rgbToHex(newRgb)}.`);
 }
@@ -2692,8 +2816,6 @@ function collectSettings() {
       shape: state.shape,
       circleInterlock: el.circleInterlock.checked,
       diamondInterlock: el.diamondInterlock.checked,
-      artistic: el.artisticStyle.checked,
-      edgeSensitivity: parseInt(el.edgeSensitivity.value, 10),
 
       panelWidth: parseInt(el.panelWidth.value, 10),
       panelHeight: parseInt(el.panelHeight.value, 10),
@@ -2755,15 +2877,9 @@ function applySettings(data) {
     setSwatchButton(el.monoColorBtn, state.monochromeBaseColor);
     el.monoColorPicker.value = s.monochromeBaseColor;
   }
-  if (s.shape) setShape(s.shape);
+  if (s.shape) applyShapeUI(s.shape);
   if (typeof s.circleInterlock === "boolean") { el.circleInterlock.checked = s.circleInterlock; state.circleInterlock = s.circleInterlock; }
   if (typeof s.diamondInterlock === "boolean") { el.diamondInterlock.checked = s.diamondInterlock; state.diamondInterlock = s.diamondInterlock; }
-  if (typeof s.artistic === "boolean") { el.artisticStyle.checked = s.artistic; state.artistic = s.artistic; }
-  if (Number.isFinite(s.edgeSensitivity)) {
-    el.edgeSensitivity.value = s.edgeSensitivity;
-    el.edgeSensitivityVal.textContent = s.edgeSensitivity;
-    state.edgeSensitivity = s.edgeSensitivity;
-  }
 
   if (Number.isFinite(s.panelWidth)) { el.panelWidth.value = s.panelWidth; el.panelWidthVal.textContent = s.panelWidth; }
   if (Number.isFinite(s.panelHeight)) { el.panelHeight.value = s.panelHeight; el.panelHeightVal.textContent = s.panelHeight; }
@@ -2930,6 +3046,38 @@ function enhanceSliders() {
     plusBtn.textContent = "+";
     plusBtn.setAttribute("aria-label", "Increase");
     plusBtn.addEventListener("click", () => stepBy(1));
+
+    // Click-and-hold auto-repeat: the "click" listeners above already
+    // handle a single click (fires once, on a completed press+release), so
+    // holding the button down just needs to keep calling stepBy on a timer
+    // until released, instead of making the user click repeatedly for a
+    // big change. Mirrors the desktop app's equivalent binding in
+    // mosaic_gui.py's _make_slider (initial delay, then a fixed repeat
+    // interval).
+    function bindHoldRepeat(button, delta) {
+      const INITIAL_DELAY = 400, REPEAT_INTERVAL = 70;
+      let timeoutId = null, intervalId = null;
+      function stop() {
+        if (timeoutId !== null) { clearTimeout(timeoutId); timeoutId = null; }
+        if (intervalId !== null) { clearInterval(intervalId); intervalId = null; }
+      }
+      button.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return; // left button only
+        stop();
+        timeoutId = setTimeout(() => {
+          timeoutId = null;
+          intervalId = setInterval(() => stepBy(delta), REPEAT_INTERVAL);
+        }, INITIAL_DELAY);
+      });
+      button.addEventListener("mouseup", stop);
+      button.addEventListener("mouseleave", stop);
+      // Also stop on a mouseup anywhere: the mouse can be dragged off the
+      // button (and released elsewhere) while still held down, which
+      // wouldn't otherwise fire this button's own mouseup/mouseleave.
+      window.addEventListener("mouseup", stop);
+    }
+    bindHoldRepeat(minusBtn, -1);
+    bindHoldRepeat(plusBtn, 1);
 
     row.insertBefore(minusBtn, input);
     input.after(plusBtn);

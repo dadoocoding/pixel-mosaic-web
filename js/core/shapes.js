@@ -7,6 +7,13 @@
  * same cell the render placed there.
  */
 
+// Flat-top hexagon center-to-corner radius, as a fraction of cellSize.
+// Shared by estimateOutputDimensions, hexHitTest, and
+// shapeColumnWidthFactor/interlockRowHeightFactor (and render.js's own
+// copy) so they all stay in lockstep -- see render.js's hexagon branch for
+// the geometry.
+export const HEX_SIZE_RATIO = 0.58;
+
 export function hexCorners(cx, cy, size) {
   const pts = [];
   for (let i = 0; i < 6; i++) {
@@ -37,14 +44,37 @@ export function diamondCorners(x0, y0, x1, y1, pad) {
  *  -- tighter packing than circles ever achieve, since circles can't fully
  *  close the gaps between them the way diamonds can.
  *
+ *  Hexagon always packs in its own honeycomb lattice -- there's no
+ *  separate interlock toggle for it, `interlock` is ignored for this
+ *  shape -- with a row height of sqrt(3) * HEX_SIZE_RATIO (~1.004) of a
+ *  cell; see shapeColumnWidthFactor for hexagon's column-width side of the
+ *  same geometry.
+ *
  *  Used both to size the rendered output (estimateOutputDimensions,
  *  renderMosaic) and, in app.js, to work out how many grid rows are needed
  *  to keep the *output image* at the source photo's aspect ratio once
- *  interlocking compresses each row's vertical spacing -- more rows are
- *  needed to make up for the tighter packing. */
+ *  interlocking (or, for hexagon, its fixed honeycomb packing) changes
+ *  each row's vertical spacing. */
 export function interlockRowHeightFactor(shape, interlock) {
+  if (shape === "hexagon") return Math.sqrt(3) * HEX_SIZE_RATIO;
   if (shape === "circle" && interlock) return Math.sqrt(3) / 2;
   if (shape === "diamond" && interlock) return 0.5;
+  return 1;
+}
+
+/** colW / cellSize for the given shape -- 1 for every shape except
+ *  hexagon. Circle/diamond interlock only ever change *row* spacing (see
+ *  interlockRowHeightFactor); hexagon's flat-top honeycomb lattice is the
+ *  only layout that also narrows the *column* spacing, to
+ *  1.5 * HEX_SIZE_RATIO (~0.87) of a cell (see render.js's hexagon
+ *  branch).
+ *
+ *  Paired with interlockRowHeightFactor in app.js's aspect-lock
+ *  calculation (syncHeightToAspect) so hexagon's narrower columns are
+ *  accounted for alongside its taller rows, instead of only the row side
+ *  getting adjusted the way circle/diamond interlock do. */
+export function shapeColumnWidthFactor(shape) {
+  if (shape === "hexagon") return 1.5 * HEX_SIZE_RATIO;
   return 1;
 }
 
@@ -57,7 +87,7 @@ export function estimateOutputDimensions(gridW, gridH, shape, cellSize,
     // Flat-top hexagons: columns get the bigger spacing (1.5x size) and
     // alternating *columns* are offset vertically by half a row -- see
     // render.js's hexagon branch for the full explanation.
-    const hexSize = cellSize * 0.58;
+    const hexSize = cellSize * HEX_SIZE_RATIO;
     const colW = 1.5 * hexSize;
     const rowH = Math.sqrt(3) * hexSize;
     return [
@@ -83,7 +113,7 @@ export function estimateOutputDimensions(gridW, gridH, shape, cellSize,
  *  which otherwise silently narrows the search window and misses the
  *  true nearest hexagon there. */
 export function hexHitTest(x, y, gridW, gridH, cellSize) {
-  const hexSize = cellSize * 0.58;
+  const hexSize = cellSize * HEX_SIZE_RATIO;
   const colW = 1.5 * hexSize;
   const rowH = Math.sqrt(3) * hexSize;
 
