@@ -26,7 +26,10 @@
     </div>
     <input type="file" id="fileInput" accept="image/*" hidden>
 
-    <div class="button-row"><button id="exportSettingsBtn">Export Settings (JSON)</button></div>
+    <div class="button-row two-up">
+      <button id="previewSettingsBtn">Preview...</button>
+      <button id="exportSettingsBtn">Export Settings (JSON)</button>
+    </div>
     <div class="button-row"><button id="importSettingsBtn">Import Settings (JSON)</button></div>
     <input type="file" id="settingsFileInput" accept="application/json,.json" hidden>
 
@@ -122,9 +125,18 @@
       <label>Brick optimization <span class="hint-inline">(Square shape only)</span></label>
       <div class="button-row"><button id="optimizeBricksBtn" disabled>Optimize Into Bricks...</button></div>
       <p class="hint" id="brickSummary"></p>
-      <div class="button-row"><button id="exportBricksJsonBtn" disabled>Save Brick List (JSON)</button></div>
-      <div class="button-row"><button id="exportBricksCsvBtn" disabled>Save Brick List (CSV)</button></div>
-      <div class="button-row"><button id="exportShoppingListBtn" disabled>Save Shopping List (CSV)</button></div>
+      <div class="button-row two-up">
+        <button id="previewBricksJsonBtn" disabled>Preview...</button>
+        <button id="exportBricksJsonBtn" disabled>Save Brick List (JSON)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewBricksCsvBtn" disabled>Preview...</button>
+        <button id="exportBricksCsvBtn" disabled>Save Brick List (CSV)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewShoppingListBtn" disabled>Preview...</button>
+        <button id="exportShoppingListBtn" disabled>Save Shopping List (CSV)</button>
+      </div>
 
       <label>Sub-structures <span class="hint-inline">(split output into build-able sections)</span></label>
       <label for="panelWidth" class="sub-label">Panel width (cells)</label>
@@ -135,9 +147,18 @@
       <div class="button-row"><button id="exportPanelsBtn" disabled>Export Panels (.zip)</button></div>
 
       <label>Export</label>
-      <div class="button-row"><button id="exportJsonBtn" disabled>Save Grid Data (JSON)</button></div>
-      <div class="button-row"><button id="exportCsvBtn" disabled>Save Grid Data (CSV)</button></div>
-      <div class="button-row"><button id="exportPaintByNumberBtn" disabled>Save Paint-by-Number (PDF)</button></div>
+      <div class="button-row two-up">
+        <button id="previewJsonBtn" disabled>Preview...</button>
+        <button id="exportJsonBtn" disabled>Save Grid Data (JSON)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewCsvBtn" disabled>Preview...</button>
+        <button id="exportCsvBtn" disabled>Save Grid Data (CSV)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewPaintByNumberBtn" disabled>Preview...</button>
+        <button id="exportPaintByNumberBtn" disabled>Save Paint-by-Number (PDF)</button>
+      </div>
     </div>
 
     <div id="adaptivePanel" hidden>
@@ -149,8 +170,14 @@
       <div class="button-row"><button id="adaptiveGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
 
       <label>Export</label>
-      <div class="button-row"><button id="exportAdaptiveTilesBtn" disabled>Save Tile List (JSON)</button></div>
-      <div class="button-row"><button id="exportAdaptiveShoppingBtn" disabled>Save Color Shopping List (CSV)</button></div>
+      <div class="button-row two-up">
+        <button id="previewAdaptiveTilesBtn" disabled>Preview...</button>
+        <button id="exportAdaptiveTilesBtn" disabled>Save Tile List (JSON)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewAdaptiveShoppingBtn" disabled>Preview...</button>
+        <button id="exportAdaptiveShoppingBtn" disabled>Save Color Shopping List (CSV)</button>
+      </div>
     </div>
 
     <div id="dicePanel" hidden>
@@ -165,8 +192,14 @@
       <div class="button-row"><button id="diceGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
 
       <label>Export</label>
-      <div class="button-row"><button id="exportDiceGuideBtn" disabled>Save Dice Build Guide (PDF)</button></div>
-      <div class="button-row"><button id="exportDiceShoppingBtn" disabled>Save Dice Shopping List (CSV)</button></div>
+      <div class="button-row two-up">
+        <button id="previewDiceGuideBtn" disabled>Preview...</button>
+        <button id="exportDiceGuideBtn" disabled>Save Dice Build Guide (PDF)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewDiceShoppingBtn" disabled>Preview...</button>
+        <button id="exportDiceShoppingBtn" disabled>Save Dice Shopping List (CSV)</button>
+      </div>
     </div>
 
     <div id="rubiksPanel" hidden>
@@ -189,8 +222,14 @@
       <div class="button-row"><button id="rubiksRecolorBtn" disabled>Recolor Cubes...</button></div>
 
       <label>Export</label>
-      <div class="button-row"><button id="exportRubiksGuideBtn" disabled>Save Cube Build Guide (PDF)</button></div>
-      <div class="button-row"><button id="exportRubiksShoppingBtn" disabled>Save Cube Shopping List (CSV)</button></div>
+      <div class="button-row two-up">
+        <button id="previewRubiksGuideBtn" disabled>Preview...</button>
+        <button id="exportRubiksGuideBtn" disabled>Save Cube Build Guide (PDF)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewRubiksShoppingBtn" disabled>Preview...</button>
+        <button id="exportRubiksShoppingBtn" disabled>Save Cube Shopping List (CSV)</button>
+      </div>
     </div>
 
     <div id="metaPanel" hidden>
@@ -218,8 +257,14 @@
       <div class="button-row"><button id="crossstitchGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
 
       <label>Export</label>
-      <div class="button-row"><button id="exportCrossStitchPatternBtn" disabled>Save Pattern Chart (PDF)</button></div>
-      <div class="button-row"><button id="exportCrossStitchShoppingBtn" disabled>Save Floss Shopping List (CSV)</button></div>
+      <div class="button-row two-up">
+        <button id="previewCrossStitchPatternBtn" disabled>Preview...</button>
+        <button id="exportCrossStitchPatternBtn" disabled>Save Pattern Chart (PDF)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewCrossStitchShoppingBtn" disabled>Preview...</button>
+        <button id="exportCrossStitchShoppingBtn" disabled>Save Floss Shopping List (CSV)</button>
+      </div>
     </div>
 
     <div id="foundobjectPanel" hidden>
