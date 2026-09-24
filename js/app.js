@@ -138,7 +138,8 @@ const el = {
   dropZone: $("dropZone"), dropLabel: $("dropLabel"),
   browseBtn: $("browseBtn"), pasteBtn: $("pasteBtn"), fileInput: $("fileInput"),
   sampleImageBtn: $("sampleImageBtn"),
-  exportSettingsBtn: $("exportSettingsBtn"), importSettingsBtn: $("importSettingsBtn"),
+  exportSettingsBtn: $("exportSettingsBtn"), previewSettingsBtn: $("previewSettingsBtn"),
+  importSettingsBtn: $("importSettingsBtn"),
   settingsFileInput: $("settingsFileInput"),
   sharedGridSizeControls: $("sharedGridSizeControls"),
   gridWidth: $("gridWidth"), gridWidthVal: $("gridWidthVal"),
@@ -163,35 +164,42 @@ const el = {
   adaptiveSensitivity: $("adaptiveSensitivity"), adaptiveSensitivityVal: $("adaptiveSensitivityVal"),
   adaptiveRectangles: $("adaptiveRectangles"),
   adaptiveGenerateBtn: $("adaptiveGenerateBtn"), exportAdaptiveTilesBtn: $("exportAdaptiveTilesBtn"),
-  exportAdaptiveShoppingBtn: $("exportAdaptiveShoppingBtn"),
+  previewAdaptiveTilesBtn: $("previewAdaptiveTilesBtn"),
+  exportAdaptiveShoppingBtn: $("exportAdaptiveShoppingBtn"), previewAdaptiveShoppingBtn: $("previewAdaptiveShoppingBtn"),
   dieColorBtn: $("dieColorBtn"), dieColorPicker: $("dieColorPicker"),
   pipColorBtn: $("pipColorBtn"), pipColorPicker: $("pipColorPicker"),
   diceGenerateBtn: $("diceGenerateBtn"),
-  exportDiceGuideBtn: $("exportDiceGuideBtn"), exportDiceShoppingBtn: $("exportDiceShoppingBtn"),
+  exportDiceGuideBtn: $("exportDiceGuideBtn"), previewDiceGuideBtn: $("previewDiceGuideBtn"),
+  exportDiceShoppingBtn: $("exportDiceShoppingBtn"), previewDiceShoppingBtn: $("previewDiceShoppingBtn"),
   cubesWide: $("cubesWide"), cubesWideVal: $("cubesWideVal"),
   cubesTall: $("cubesTall"), cubesTallVal: $("cubesTallVal"),
   lockAspectRubiks: $("lockAspectRubiks"),
   rubiksSizeEstimate: $("rubiksSizeEstimate"),
   rubiksGenerateBtn: $("rubiksGenerateBtn"), rubiksRecolorBtn: $("rubiksRecolorBtn"),
-  exportRubiksGuideBtn: $("exportRubiksGuideBtn"), exportRubiksShoppingBtn: $("exportRubiksShoppingBtn"),
+  exportRubiksGuideBtn: $("exportRubiksGuideBtn"), previewRubiksGuideBtn: $("previewRubiksGuideBtn"),
+  exportRubiksShoppingBtn: $("exportRubiksShoppingBtn"), previewRubiksShoppingBtn: $("previewRubiksShoppingBtn"),
   tintStrength: $("tintStrength"), tintStrengthVal: $("tintStrengthVal"), metaGenerateBtn: $("metaGenerateBtn"),
   crossstitchPanel: $("crossstitchPanel"), crossstitchGenerateBtn: $("crossstitchGenerateBtn"),
   crossstitchMaxColors: $("crossstitchMaxColors"), crossstitchMaxColorsVal: $("crossstitchMaxColorsVal"),
   exportCrossStitchPatternBtn: $("exportCrossStitchPatternBtn"),
+  previewCrossStitchPatternBtn: $("previewCrossStitchPatternBtn"),
   exportCrossStitchShoppingBtn: $("exportCrossStitchShoppingBtn"),
+  previewCrossStitchShoppingBtn: $("previewCrossStitchShoppingBtn"),
   foundObjectNumColors: $("foundObjectNumColors"), foundObjectNumColorsVal: $("foundObjectNumColorsVal"),
   foundObjectTintStrength: $("foundObjectTintStrength"), foundObjectTintStrengthVal: $("foundObjectTintStrengthVal"),
   foundObjectGenerateBtn: $("foundObjectGenerateBtn"),
   foundObjectLibraryBtn: $("foundObjectLibraryBtn"), foundObjectSummary: $("foundObjectSummary"),
   optimizeBricksBtn: $("optimizeBricksBtn"), brickSummary: $("brickSummary"),
-  exportBricksJsonBtn: $("exportBricksJsonBtn"), exportBricksCsvBtn: $("exportBricksCsvBtn"),
-  exportShoppingListBtn: $("exportShoppingListBtn"),
+  exportBricksJsonBtn: $("exportBricksJsonBtn"), previewBricksJsonBtn: $("previewBricksJsonBtn"),
+  exportBricksCsvBtn: $("exportBricksCsvBtn"), previewBricksCsvBtn: $("previewBricksCsvBtn"),
+  exportShoppingListBtn: $("exportShoppingListBtn"), previewShoppingListBtn: $("previewShoppingListBtn"),
   panelWidth: $("panelWidth"), panelWidthVal: $("panelWidthVal"),
   panelHeight: $("panelHeight"), panelHeightVal: $("panelHeightVal"),
   panelEstimate: $("panelEstimate"), exportPanelsBtn: $("exportPanelsBtn"),
   exportPreviewBtn: $("exportPreviewBtn"),
-  exportPngBtn: $("exportPngBtn"), exportJsonBtn: $("exportJsonBtn"), exportCsvBtn: $("exportCsvBtn"),
-  exportPaintByNumberBtn: $("exportPaintByNumberBtn"),
+  exportPngBtn: $("exportPngBtn"), exportJsonBtn: $("exportJsonBtn"), previewJsonBtn: $("previewJsonBtn"),
+  exportCsvBtn: $("exportCsvBtn"), previewCsvBtn: $("previewCsvBtn"),
+  exportPaintByNumberBtn: $("exportPaintByNumberBtn"), previewPaintByNumberBtn: $("previewPaintByNumberBtn"),
   viewToggle: $("viewToggle"),
   zoomInBtn: $("zoomInBtn"), zoomOutBtn: $("zoomOutBtn"), zoomFitBtn: $("zoomFitBtn"),
   previewCanvas: $("previewCanvas"), previewSaveOverlay: $("previewSaveOverlay"),
@@ -1084,8 +1092,11 @@ async function generateMosaic() {
     el.exportPngBtn.disabled = false;
     el.exportPreviewBtn.disabled = false;
     el.exportJsonBtn.disabled = false;
+    el.previewJsonBtn.disabled = false;
     el.exportCsvBtn.disabled = false;
+    el.previewCsvBtn.disabled = false;
     el.exportPaintByNumberBtn.disabled = false;
+    el.previewPaintByNumberBtn.disabled = false;
     el.paletteBtn.disabled = false;
     el.sampleSheetBtn.disabled = false;
     el.exportPanelsBtn.disabled = false;
@@ -1121,21 +1132,32 @@ function disableGenerationDependentButtons() {
   el.exportPngBtn.disabled = true;
   el.exportPreviewBtn.disabled = true;
   el.exportJsonBtn.disabled = true;
+  el.previewJsonBtn.disabled = true;
   el.exportCsvBtn.disabled = true;
+  el.previewCsvBtn.disabled = true;
   el.exportPaintByNumberBtn.disabled = true;
+  el.previewPaintByNumberBtn.disabled = true;
   el.paletteBtn.disabled = true;
   el.sampleSheetBtn.disabled = true;
   el.exportPanelsBtn.disabled = true;
   el.optimizeBricksBtn.disabled = true;
   el.exportAdaptiveTilesBtn.disabled = true;
+  el.previewAdaptiveTilesBtn.disabled = true;
   el.exportAdaptiveShoppingBtn.disabled = true;
+  el.previewAdaptiveShoppingBtn.disabled = true;
   el.exportDiceGuideBtn.disabled = true;
+  el.previewDiceGuideBtn.disabled = true;
   el.exportDiceShoppingBtn.disabled = true;
+  el.previewDiceShoppingBtn.disabled = true;
   el.exportRubiksGuideBtn.disabled = true;
+  el.previewRubiksGuideBtn.disabled = true;
   el.exportRubiksShoppingBtn.disabled = true;
+  el.previewRubiksShoppingBtn.disabled = true;
   el.rubiksRecolorBtn.disabled = true;
   el.exportCrossStitchPatternBtn.disabled = true;
+  el.previewCrossStitchPatternBtn.disabled = true;
   el.exportCrossStitchShoppingBtn.disabled = true;
+  el.previewCrossStitchShoppingBtn.disabled = true;
   el.foundObjectLibraryBtn.disabled = true;
 }
 
@@ -1144,8 +1166,11 @@ function clearBrickLayout() {
   state.brickCanvas = null;
   el.brickSummary.textContent = "";
   el.exportBricksJsonBtn.disabled = true;
+  el.previewBricksJsonBtn.disabled = true;
   el.exportBricksCsvBtn.disabled = true;
+  el.previewBricksCsvBtn.disabled = true;
   el.exportShoppingListBtn.disabled = true;
+  el.previewShoppingListBtn.disabled = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1183,7 +1208,9 @@ async function generateAdaptiveMosaic() {
     el.exportPngBtn.disabled = false;
     el.exportPreviewBtn.disabled = false;
     el.exportAdaptiveTilesBtn.disabled = false;
+    el.previewAdaptiveTilesBtn.disabled = false;
     el.exportAdaptiveShoppingBtn.disabled = false;
+    el.previewAdaptiveShoppingBtn.disabled = false;
     clearBrickLayout();
 
     setViewMode("output");
@@ -1197,20 +1224,35 @@ async function generateAdaptiveMosaic() {
   }
 }
 
-el.exportAdaptiveTilesBtn.addEventListener("click", () => {
+el.exportAdaptiveTilesBtn.addEventListener("click", exportAdaptiveTiles);
+el.previewAdaptiveTilesBtn.addEventListener("click", () => {
+  if (!state.adaptiveLeaves) return;
+  const json = buildAdaptiveTilesJson(state.adaptiveLeaves, state.renderedGridW, state.renderedGridH,
+    { sourceName: state.sourceFileName });
+  openTextExportPreviewDialog("Preview: Tile List (JSON)", json, exportAdaptiveTiles);
+});
+
+function exportAdaptiveTiles() {
   if (!state.adaptiveLeaves) return;
   const json = buildAdaptiveTilesJson(state.adaptiveLeaves, state.renderedGridW, state.renderedGridH,
     { sourceName: state.sourceFileName });
   downloadText(json, "adaptive_tiles.json", "application/json");
   setStatus("Saved adaptive_tiles.json");
+}
+
+el.exportAdaptiveShoppingBtn.addEventListener("click", exportAdaptiveShoppingList);
+el.previewAdaptiveShoppingBtn.addEventListener("click", () => {
+  if (!state.adaptiveLeaves) return;
+  openTextExportPreviewDialog("Preview: Color Shopping List (CSV)",
+    buildAdaptiveShoppingListCsv(state.adaptiveLeaves), exportAdaptiveShoppingList);
 });
 
-el.exportAdaptiveShoppingBtn.addEventListener("click", () => {
+function exportAdaptiveShoppingList() {
   if (!state.adaptiveLeaves) return;
   const csv = buildAdaptiveShoppingListCsv(state.adaptiveLeaves);
   downloadText(csv, "adaptive_shopping_list.csv", "text/csv");
   setStatus("Saved adaptive_shopping_list.csv");
-});
+}
 
 // ---------------------------------------------------------------------------
 // Generate -- Dice (grayscale + Floyd-Steinberg dither to pip counts)
@@ -1250,7 +1292,9 @@ async function generateDiceMosaic() {
     el.exportPngBtn.disabled = false;
     el.exportPreviewBtn.disabled = false;
     el.exportDiceGuideBtn.disabled = false;
+    el.previewDiceGuideBtn.disabled = false;
     el.exportDiceShoppingBtn.disabled = false;
+    el.previewDiceShoppingBtn.disabled = false;
     clearBrickLayout();
 
     setViewMode("output");
@@ -1265,6 +1309,20 @@ async function generateDiceMosaic() {
 }
 
 el.exportDiceGuideBtn.addEventListener("click", exportDiceBuildGuide);
+el.previewDiceGuideBtn.addEventListener("click", () => {
+  if (!state.dicePipGrid) return;
+  try {
+    const { renderedGridW: gridW, renderedGridH: gridH, renderedCellSize: cellSize } = state;
+    const page1 = renderDiceMosaic(state.dicePipGrid, gridW, gridH, cellSize,
+      [255, 255, 255], [20, 20, 20], [255, 255, 255], makeCanvas,
+      { outlineColor: [150, 150, 150] });
+    const page2 = renderDiceKey(state.dicePipGrid, [255, 255, 255], [20, 20, 20], makeCanvas);
+    openPdfExportPreviewDialog("Preview: Dice Build Guide (PDF)", [page1, page2], exportDiceBuildGuide);
+  } catch (err) {
+    setStatus(`Error building dice build guide preview: ${err.message}`);
+    console.error(err);
+  }
+});
 
 function exportDiceBuildGuide() {
   if (!state.dicePipGrid) return;
@@ -1294,11 +1352,18 @@ function exportDiceBuildGuide() {
   }
 }
 
-el.exportDiceShoppingBtn.addEventListener("click", () => {
+el.exportDiceShoppingBtn.addEventListener("click", exportDiceShoppingList);
+el.previewDiceShoppingBtn.addEventListener("click", () => {
+  if (!state.dicePipGrid) return;
+  openTextExportPreviewDialog("Preview: Dice Shopping List (CSV)",
+    buildDiceShoppingListCsv(state.dicePipGrid), exportDiceShoppingList);
+});
+
+function exportDiceShoppingList() {
   if (!state.dicePipGrid) return;
   downloadText(buildDiceShoppingListCsv(state.dicePipGrid), "dice_shopping_list.csv", "text/csv");
   setStatus("Saved dice_shopping_list.csv");
-});
+}
 
 // ---------------------------------------------------------------------------
 // Generate -- Rubik's Cube (fixed 6-color palette, grouped into 3x3 blocks)
@@ -1339,7 +1404,9 @@ async function generateRubiksMosaic() {
     el.exportPngBtn.disabled = false;
     el.exportPreviewBtn.disabled = false;
     el.exportRubiksGuideBtn.disabled = false;
+    el.previewRubiksGuideBtn.disabled = false;
     el.exportRubiksShoppingBtn.disabled = false;
+    el.previewRubiksShoppingBtn.disabled = false;
     el.rubiksRecolorBtn.disabled = false;
     clearBrickLayout();
 
@@ -1355,6 +1422,18 @@ async function generateRubiksMosaic() {
 }
 
 el.exportRubiksGuideBtn.addEventListener("click", exportRubiksBuildGuide);
+el.previewRubiksGuideBtn.addEventListener("click", () => {
+  if (!state.rubiksGrid) return;
+  try {
+    const { renderedGridW: gridW, renderedGridH: gridH, renderedCellSize: cellSize } = state;
+    const page1 = renderRubiksBuildSheet(state.rubiksGrid, gridW, gridH, cellSize, makeCanvas);
+    const page2 = renderRubiksKey(state.rubiksGrid, RUBIKS_PALETTE, gridW, gridH, makeCanvas);
+    openPdfExportPreviewDialog("Preview: Cube Build Guide (PDF)", [page1, page2], exportRubiksBuildGuide);
+  } catch (err) {
+    setStatus(`Error building Rubik's Cube build guide preview: ${err.message}`);
+    console.error(err);
+  }
+});
 
 function exportRubiksBuildGuide() {
   if (!state.rubiksGrid) return;
@@ -1379,12 +1458,19 @@ function exportRubiksBuildGuide() {
   }
 }
 
-el.exportRubiksShoppingBtn.addEventListener("click", () => {
+el.exportRubiksShoppingBtn.addEventListener("click", exportRubiksShoppingList);
+el.previewRubiksShoppingBtn.addEventListener("click", () => {
+  if (!state.rubiksGrid) return;
+  const csv = buildRubiksShoppingListCsv(state.rubiksGrid, RUBIKS_PALETTE, state.renderedGridW, state.renderedGridH);
+  openTextExportPreviewDialog("Preview: Cube Shopping List (CSV)", csv, exportRubiksShoppingList);
+});
+
+function exportRubiksShoppingList() {
   if (!state.rubiksGrid) return;
   const csv = buildRubiksShoppingListCsv(state.rubiksGrid, RUBIKS_PALETTE, state.renderedGridW, state.renderedGridH);
   downloadText(csv, "rubiks_cube_shopping_list.csv", "text/csv");
   setStatus("Saved rubiks_cube_shopping_list.csv");
-});
+}
 
 // Recolor Cubes -- reassign any of the 6 fixed cube colors to display as a
 // different one of the 6 (e.g. "show blue wherever the mosaic called for
@@ -1553,7 +1639,9 @@ async function generateCrossStitchMosaic() {
     el.exportPngBtn.disabled = false;
     el.exportPreviewBtn.disabled = false;
     el.exportCrossStitchPatternBtn.disabled = false;
+    el.previewCrossStitchPatternBtn.disabled = false;
     el.exportCrossStitchShoppingBtn.disabled = false;
+    el.previewCrossStitchShoppingBtn.disabled = false;
     clearBrickLayout();
 
     setViewMode("output");
@@ -1569,6 +1657,34 @@ async function generateCrossStitchMosaic() {
 }
 
 el.exportCrossStitchPatternBtn.addEventListener("click", exportCrossStitchPattern);
+el.previewCrossStitchPatternBtn.addEventListener("click", () => {
+  if (!state.crossStitchGrid) return;
+  try {
+    const { renderedGridW: gridW, renderedGridH: gridH } = state;
+    const patternCellSize = 22;
+    const maxStitchesPerPage = 50;
+
+    const symbolMap = crossStitchSymbolMap(state.crossStitchGrid);
+    const panels = splitIntoPanels(state.crossStitchGrid, gridW, gridH, maxStitchesPerPage, maxStitchesPerPage);
+    const nPanelRows = Math.max(...panels.map(p => p.panelRow)) + 1;
+    const nPanelCols = Math.max(...panels.map(p => p.panelCol)) + 1;
+
+    const pages = panels.map(p => {
+      const label = `Page ${p.panelRow + 1},${p.panelCol + 1} of ${nPanelRows}x${nPanelCols}  `
+        + `(stitches ${p.colStart + 1}-${p.colEnd} x ${p.rowStart + 1}-${p.rowEnd})`;
+      return renderCrossStitchPatternPage(p.grid, p.width, p.height, symbolMap,
+        p.rowStart, p.colStart, label, patternCellSize, makeCanvas);
+    });
+
+    const counts = dmcColorCounts(state.crossStitchGrid);
+    pages.push(renderCrossStitchLegendPage(counts, symbolMap, makeCanvas));
+
+    openPdfExportPreviewDialog("Preview: Pattern Chart (PDF)", pages, exportCrossStitchPattern);
+  } catch (err) {
+    setStatus(`Error building cross-stitch pattern preview: ${err.message}`);
+    console.error(err);
+  }
+});
 
 function exportCrossStitchPattern() {
   if (!state.crossStitchGrid) return;
@@ -1624,12 +1740,19 @@ function exportCrossStitchPattern() {
   }
 }
 
-el.exportCrossStitchShoppingBtn.addEventListener("click", () => {
+el.exportCrossStitchShoppingBtn.addEventListener("click", exportCrossStitchShoppingList);
+el.previewCrossStitchShoppingBtn.addEventListener("click", () => {
+  if (!state.crossStitchGrid) return;
+  openTextExportPreviewDialog("Preview: Floss Shopping List (CSV)",
+    buildCrossStitchShoppingListCsv(state.crossStitchGrid), exportCrossStitchShoppingList);
+});
+
+function exportCrossStitchShoppingList() {
   if (!state.crossStitchGrid) return;
   downloadText(buildCrossStitchShoppingListCsv(state.crossStitchGrid),
     "cross_stitch_shopping_list.csv", "text/csv");
   setStatus("Saved cross_stitch_shopping_list.csv");
-});
+}
 
 // ---------------------------------------------------------------------------
 // Generate -- Found Object (quantize, then swap any color for a user photo)
@@ -2218,8 +2341,11 @@ async function runBrickOptimization(statusP, buttons) {
     el.brickSummary.textContent = `${bricks.length} pieces for ${totalCells} cells (${avg.toFixed(1)} cells/piece avg)`;
 
     el.exportBricksJsonBtn.disabled = false;
+    el.previewBricksJsonBtn.disabled = false;
     el.exportBricksCsvBtn.disabled = false;
+    el.previewBricksCsvBtn.disabled = false;
     el.exportShoppingListBtn.disabled = false;
+    el.previewShoppingListBtn.disabled = false;
 
     closeDialog();
     setViewMode("bricks");
@@ -2231,23 +2357,47 @@ async function runBrickOptimization(statusP, buttons) {
   }
 }
 
-el.exportBricksJsonBtn.addEventListener("click", () => {
+el.exportBricksJsonBtn.addEventListener("click", exportBricksJson);
+el.previewBricksJsonBtn.addEventListener("click", () => {
+  if (!state.brickLayout) return;
+  const json = buildBricksJson(state.brickLayout, state.palette, state.renderedShape,
+    { sourceName: state.sourceFileName, names: state.colorNames });
+  openTextExportPreviewDialog("Preview: Brick List (JSON)", json, exportBricksJson);
+});
+
+function exportBricksJson() {
   if (!state.brickLayout) return;
   const json = buildBricksJson(state.brickLayout, state.palette, state.renderedShape,
     { sourceName: state.sourceFileName, names: state.colorNames });
   downloadText(json, "bricks.json", "application/json");
   setStatus("Saved bricks.json");
+}
+
+el.exportBricksCsvBtn.addEventListener("click", exportBricksCsv);
+el.previewBricksCsvBtn.addEventListener("click", () => {
+  if (!state.brickLayout) return;
+  openTextExportPreviewDialog("Preview: Brick List (CSV)",
+    buildBricksCsv(state.brickLayout, state.palette, state.colorNames), exportBricksCsv);
 });
-el.exportBricksCsvBtn.addEventListener("click", () => {
+
+function exportBricksCsv() {
   if (!state.brickLayout) return;
   downloadText(buildBricksCsv(state.brickLayout, state.palette, state.colorNames), "bricks.csv", "text/csv");
   setStatus("Saved bricks.csv");
+}
+
+el.exportShoppingListBtn.addEventListener("click", exportBricksShoppingList);
+el.previewShoppingListBtn.addEventListener("click", () => {
+  if (!state.brickLayout) return;
+  openTextExportPreviewDialog("Preview: Shopping List (CSV)",
+    buildShoppingListCsv(state.brickLayout, state.palette, state.colorNames), exportBricksShoppingList);
 });
-el.exportShoppingListBtn.addEventListener("click", () => {
+
+function exportBricksShoppingList() {
   if (!state.brickLayout) return;
   downloadText(buildShoppingListCsv(state.brickLayout, state.palette, state.colorNames), "shopping_list.csv", "text/csv");
   setStatus("Saved shopping_list.csv");
-});
+}
 
 // ---------------------------------------------------------------------------
 // Sub-structure panel export (zipped)
@@ -2361,24 +2511,127 @@ function openExportPreviewDialog() {
   });
 }
 
-el.exportJsonBtn.addEventListener("click", () => {
+// Generic text (CSV/JSON) export preview: shows exactly the text a Save
+// button would write, with the same Save action available right there --
+// mirrors openExportPreviewDialog's image pattern for text output.
+function openTextExportPreviewDialog(title, content, onSave) {
+  const body = document.createElement("div");
+  const pre = document.createElement("pre");
+  pre.className = "export-preview-text";
+  pre.textContent = content;
+  body.appendChild(pre);
+
+  showDialog({
+    title,
+    bodyEl: body,
+    wide: true,
+    actions: [
+      { label: "Close", onClick: closeDialog },
+      { label: "Save...", primary: true, onClick: () => { onSave(); closeDialog(); } },
+    ],
+  });
+}
+
+// Generic PDF-pages export preview: `pages` is an array of already-rendered
+// canvases (the same render calls the real export makes, so what's shown is
+// byte-for-byte what Save would produce), with Prev/Next paging for
+// multi-page guides and the same Save action as the real export button.
+function openPdfExportPreviewDialog(title, pages, onSave) {
+  const body = document.createElement("div");
+  body.className = "export-preview-pages";
+  const img = document.createElement("img");
+  img.className = "export-preview-img";
+  img.alt = `${title} preview`;
+  body.appendChild(img);
+
+  let pageIdx = 0;
+  let nav = null, label = null, prevBtn = null, nextBtn = null;
+  if (pages.length > 1) {
+    nav = document.createElement("div");
+    nav.className = "export-preview-page-nav";
+    prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.textContent = "< Prev";
+    label = document.createElement("span");
+    nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.textContent = "Next >";
+    nav.append(prevBtn, label, nextBtn);
+    body.appendChild(nav);
+  }
+
+  function showPage(i) {
+    pageIdx = i;
+    img.src = pages[i].toDataURL("image/png");
+    if (label) label.textContent = `Page ${i + 1} of ${pages.length}`;
+    if (prevBtn) prevBtn.disabled = i === 0;
+    if (nextBtn) nextBtn.disabled = i === pages.length - 1;
+  }
+  if (prevBtn) prevBtn.addEventListener("click", () => showPage(Math.max(0, pageIdx - 1)));
+  if (nextBtn) nextBtn.addEventListener("click", () => showPage(Math.min(pages.length - 1, pageIdx + 1)));
+  showPage(0);
+
+  showDialog({
+    title,
+    bodyEl: body,
+    wide: true,
+    actions: [
+      { label: "Close", onClick: closeDialog },
+      { label: "Save PDF...", primary: true, onClick: () => { onSave(); closeDialog(); } },
+    ],
+  });
+}
+
+el.exportJsonBtn.addEventListener("click", exportJson);
+el.previewJsonBtn.addEventListener("click", () => {
+  if (!state.quantizedGrid) return;
+  const json = buildGridJson(state.quantizedGrid, state.gridW, state.gridH, state.palette, state.renderedShape,
+    { sourceName: state.sourceFileName, names: state.colorNames });
+  openTextExportPreviewDialog("Preview: Grid Data (JSON)", json, exportJson);
+});
+
+function exportJson() {
   if (!state.quantizedGrid) return;
   const json = buildGridJson(state.quantizedGrid, state.gridW, state.gridH, state.palette, state.renderedShape,
     { sourceName: state.sourceFileName, names: state.colorNames });
   downloadText(json, "mosaic.json", "application/json");
   setStatus("Saved mosaic.json");
+}
+
+el.exportCsvBtn.addEventListener("click", exportCsv);
+el.previewCsvBtn.addEventListener("click", () => {
+  if (!state.quantizedGrid) return;
+  const gridCsv = buildGridCsv(state.quantizedGrid, state.gridW, state.gridH, state.palette, state.colorNames);
+  const colorsCsv = buildPaletteCsv(state.quantizedGrid, state.palette, state.colorNames);
+  const content = `--- mosaic.csv (per-cell grid) ---\n${gridCsv}\n`
+    + `--- mosaic_colors.csv (color totals) ---\n${colorsCsv}`;
+  openTextExportPreviewDialog("Preview: Grid Data (CSV)", content, exportCsv);
 });
 
-el.exportCsvBtn.addEventListener("click", () => {
+function exportCsv() {
   if (!state.quantizedGrid) return;
   downloadText(buildGridCsv(state.quantizedGrid, state.gridW, state.gridH, state.palette, state.colorNames),
     "mosaic.csv", "text/csv");
   downloadText(buildPaletteCsv(state.quantizedGrid, state.palette, state.colorNames),
     "mosaic_colors.csv", "text/csv");
   setStatus("Saved mosaic.csv and mosaic_colors.csv");
-});
+}
 
 el.exportPaintByNumberBtn.addEventListener("click", exportPaintByNumber);
+el.previewPaintByNumberBtn.addEventListener("click", () => {
+  if (!state.quantizedGrid) return;
+  try {
+    const page1 = renderPaintByNumber(state.quantizedGrid, state.gridW, state.gridH,
+      state.palette, state.renderedShape, state.renderedCellSize, makeCanvas,
+      { circleInterlock: state.renderedCircleInterlock, diamondInterlock: state.renderedDiamondInterlock });
+    const counts = colorCounts(state.quantizedGrid, state.palette, state.colorNames);
+    const page2 = renderColorKey(state.palette, state.colorNames, counts, makeCanvas);
+    openPdfExportPreviewDialog("Preview: Paint-by-Number (PDF)", [page1, page2], exportPaintByNumber);
+  } catch (err) {
+    setStatus(`Error building paint-by-number preview: ${err.message}`);
+    console.error(err);
+  }
+});
 
 function exportPaintByNumber() {
   if (!state.quantizedGrid) return;
@@ -2572,10 +2825,15 @@ function applySettings(data) {
   updateRubiksSizeEstimate();
 }
 
-el.exportSettingsBtn.addEventListener("click", () => {
+el.exportSettingsBtn.addEventListener("click", exportSettings);
+el.previewSettingsBtn.addEventListener("click", () => {
+  openTextExportPreviewDialog("Preview: Settings (JSON)", JSON.stringify(collectSettings(), null, 2), exportSettings);
+});
+
+function exportSettings() {
   downloadText(JSON.stringify(collectSettings(), null, 2), "pixel_mosaic_settings.json", "application/json");
   setStatus("Saved pixel_mosaic_settings.json");
-});
+}
 
 el.importSettingsBtn.addEventListener("click", () => el.settingsFileInput.click());
 
@@ -2614,9 +2872,84 @@ el.settingsFileInput.addEventListener("change", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Slider fine-adjustment: +/- buttons and consistent mouse-wheel support
+// ---------------------------------------------------------------------------
+
+// Every slider in the app shares the same markup shape (a .slider-row
+// wrapping the <input type="range"> plus a trailing .slider-val readout),
+// so this one pass enhances all of them at once rather than wiring each
+// slider by hand -- same idea as the desktop app's single _make_slider
+// factory.
+//
+// Mouse-wheel-over-a-slider previously did nothing consistent: native
+// <input type="range"> wheel handling is a Firefox-only behavior (Chrome,
+// Safari and Edge never adjust a range input on wheel at all), so
+// scrolling over a slider would silently do nothing in most browsers, or
+// -- worse -- just scroll the whole Settings sidebar underneath it, since
+// nothing was stopping that scroll from bubbling up to #panel. That's this
+// app's actual "works on some sliders but not others" bug: it's really
+// "works only in Firefox, and only there because the browser itself
+// happens to implement it, not because the app does." Explicitly wiring
+// wheel support here, uniformly, on every slider fixes that everywhere.
+function enhanceSliders() {
+  document.querySelectorAll(".slider-row").forEach((row) => {
+    const input = row.querySelector('input[type="range"]');
+    if (!input) return;
+
+    const lo = Number(input.min);
+    const hi = Number(input.max);
+    const step = Number(input.step) || 1;
+
+    function fireInput() {
+      // A real user drag dispatches both -- match that exactly so every
+      // existing "input" listener (live readouts, aspect-lock sync, size
+      // estimates, ...) keeps working unchanged, plus "change" for any
+      // listener that only cares about the settled final value.
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function stepBy(delta) {
+      if (input.disabled) return;
+      const next = Math.min(hi, Math.max(lo, Number(input.value) + delta * step));
+      if (next === Number(input.value)) return;
+      input.value = String(next);
+      fireInput();
+    }
+
+    const minusBtn = document.createElement("button");
+    minusBtn.type = "button";
+    minusBtn.className = "slider-step-btn";
+    minusBtn.textContent = "−";
+    minusBtn.setAttribute("aria-label", "Decrease");
+    minusBtn.addEventListener("click", () => stepBy(-1));
+
+    const plusBtn = document.createElement("button");
+    plusBtn.type = "button";
+    plusBtn.className = "slider-step-btn";
+    plusBtn.textContent = "+";
+    plusBtn.setAttribute("aria-label", "Increase");
+    plusBtn.addEventListener("click", () => stepBy(1));
+
+    row.insertBefore(minusBtn, input);
+    input.after(plusBtn);
+
+    // Wheel: bind on the whole row (not just the <input>) so it works
+    // whether the pointer is over the track, the +/- buttons, or the
+    // value readout -- and always preventDefault so this never also
+    // scrolls the Settings sidebar underneath, on any browser.
+    row.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      stepBy(e.deltaY < 0 ? 1 : -1);
+    }, { passive: false });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 
+enhanceSliders();
 setSwatchButton(el.bgColorBtn, state.bgColor);
 setSwatchButton(el.monoColorBtn, state.monochromeBaseColor);
 setSwatchButton(el.dieColorBtn, state.dieColor);
