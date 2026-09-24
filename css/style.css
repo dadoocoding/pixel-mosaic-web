@@ -71,6 +71,7 @@ body {
    override to actually disappear, the same way #previewSaveOverlay[hidden]
    does below. */
 #circleInterlockLabel[hidden] { display: none; }
+#diamondInterlockLabel[hidden] { display: none; }
 
 .hint {
   color: var(--text-dim);

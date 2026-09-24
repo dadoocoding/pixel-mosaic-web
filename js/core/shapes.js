@@ -24,9 +24,35 @@ export function diamondCorners(x0, y0, x1, y1, pad) {
   return [[cx, iy0], [ix1, cy], [cx, iy1], [ix0, cy]];
 }
 
+/** rowH / cellSize for the given shape+interlock combination -- 1 for a
+ *  plain grid (rows spaced a full cell apart), less than 1 when
+ *  interlocking packs rows closer together.
+ *
+ *  Circle interlock (nested like coins/rivets) uses the classic
+ *  hexagonal-packing row height of sqrt(3)/2 (~0.866) of a cell. Diamond
+ *  interlock packs rows at *half* a cell (0.5): a diamond is a square
+ *  rotated 45 degrees, so offsetting alternating rows by half a cell both
+ *  ways makes each diamond's corner meet its neighbors' corners exactly,
+ *  tiling edge-to-edge with no gaps (the classic argyle/harlequin lattice)
+ *  -- tighter packing than circles ever achieve, since circles can't fully
+ *  close the gaps between them the way diamonds can.
+ *
+ *  Used both to size the rendered output (estimateOutputDimensions,
+ *  renderMosaic) and, in app.js, to work out how many grid rows are needed
+ *  to keep the *output image* at the source photo's aspect ratio once
+ *  interlocking compresses each row's vertical spacing -- more rows are
+ *  needed to make up for the tighter packing. */
+export function interlockRowHeightFactor(shape, interlock) {
+  if (shape === "circle" && interlock) return Math.sqrt(3) / 2;
+  if (shape === "diamond" && interlock) return 0.5;
+  return 1;
+}
+
 /** [width, height] in px that renderMosaic will produce for these settings.
- *  circleInterlock only matters when shape === "circle". */
-export function estimateOutputDimensions(gridW, gridH, shape, cellSize, circleInterlock = false) {
+ *  circleInterlock only matters when shape === "circle";
+ *  diamondInterlock only matters when shape === "diamond". */
+export function estimateOutputDimensions(gridW, gridH, shape, cellSize,
+                                          circleInterlock = false, diamondInterlock = false) {
   if (shape === "hexagon") {
     // Flat-top hexagons: columns get the bigger spacing (1.5x size) and
     // alternating *columns* are offset vertically by half a row -- see
@@ -39,8 +65,9 @@ export function estimateOutputDimensions(gridW, gridH, shape, cellSize, circleIn
       Math.floor(rowH * (gridH + 0.5) + cellSize),
     ];
   }
-  if (shape === "circle" && circleInterlock) {
-    const rowH = cellSize * (Math.sqrt(3) / 2);
+  const interlock = (shape === "circle" && circleInterlock) || (shape === "diamond" && diamondInterlock);
+  if (interlock) {
+    const rowH = cellSize * interlockRowHeightFactor(shape, true);
     const imgW = Math.floor(cellSize * gridW + cellSize / 2);
     const imgH = gridH > 0 ? Math.floor(rowH * (gridH - 1) + cellSize) : cellSize;
     return [imgW, imgH];
@@ -90,6 +117,36 @@ export function hexHitTest(x, y, gridW, gridH, cellSize) {
 export function circleInterlockHitTest(x, y, gridW, gridH, cellSize) {
   const colW = cellSize;
   const rowH = cellSize * (Math.sqrt(3) / 2);
+
+  const approxRow = (y - cellSize / 2) / rowH;
+  const approxRowT = Math.trunc(approxRow);
+  const rowStart = Math.max(0, approxRowT - 1);
+  const rowEnd = Math.min(gridH - 1, approxRowT + 1);
+
+  let best = null, bestDist = Infinity;
+  for (let row = rowStart; row <= rowEnd; row++) {
+    const rowOffset = row % 2 === 1 ? colW / 2 : 0;
+    const approxCol = (x - cellSize / 2 - rowOffset) / colW;
+    const approxColT = Math.trunc(approxCol);
+    const colStart = Math.max(0, approxColT - 1);
+    const colEnd = Math.min(gridW - 1, approxColT + 1);
+    for (let col = colStart; col <= colEnd; col++) {
+      const cx = colW * col + rowOffset + cellSize / 2;
+      const cy = rowH * row + cellSize / 2;
+      const dist = (cx - x) ** 2 + (cy - y) ** 2;
+      if (dist < bestDist) { bestDist = dist; best = [row, col]; }
+    }
+  }
+  return best;
+}
+
+/** Find the (row, col) of the interlocked diamond nearest (x, y). Same
+ *  windowed nearest-neighbor approach as circleInterlockHitTest, mirroring
+ *  the desktop app's _diamond_interlock_hit_test. Only used when
+ *  shape === "diamond" and diamondInterlock is on. */
+export function diamondInterlockHitTest(x, y, gridW, gridH, cellSize) {
+  const colW = cellSize;
+  const rowH = cellSize * interlockRowHeightFactor("diamond", true);
 
   const approxRow = (y - cellSize / 2) / rowH;
   const approxRowT = Math.trunc(approxRow);

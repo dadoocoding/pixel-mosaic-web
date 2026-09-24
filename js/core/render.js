@@ -9,7 +9,7 @@
  * tests -- no browser-only globals referenced directly.
  */
 
-import { hexCorners, diamondCorners, estimateOutputDimensions } from "./shapes.js";
+import { hexCorners, diamondCorners, estimateOutputDimensions, interlockRowHeightFactor } from "./shapes.js";
 import { rgbToHex, contrastTextColor } from "./color.js";
 
 export { estimateOutputDimensions };
@@ -27,14 +27,19 @@ export { estimateOutputDimensions };
  * other, alternating rows are shifted over by half a cell and packed
  * closer together vertically so each row nests into the gap of the row
  * below it (like coins/rivets), rather than lining up in a plain grid.
+ *
+ * options.diamondInterlock (default false, only meaningful when
+ * shape === "diamond"): the same idea, but diamonds pack edge-to-edge with
+ * zero gaps (a gapless argyle/harlequin lattice) since a diamond's corners
+ * can meet its neighbors' corners exactly.
  */
 export function renderMosaic(quantizedGrid, gridW, gridH, shape, cellSize, bgColor, createCanvasFn,
                               options = {}) {
   const {
-    artistic = false, edgeMask = null, circleInterlock = false,
+    artistic = false, edgeMask = null, circleInterlock = false, diamondInterlock = false,
     gridLineColor = [30, 30, 30], outlineColor = [10, 10, 10],
   } = options;
-  const [imgW, imgH] = estimateOutputDimensions(gridW, gridH, shape, cellSize, circleInterlock);
+  const [imgW, imgH] = estimateOutputDimensions(gridW, gridH, shape, cellSize, circleInterlock, diamondInterlock);
   const canvas = createCanvasFn(imgW, imgH);
   const ctx = canvas.getContext("2d");
 
@@ -97,6 +102,33 @@ export function renderMosaic(quantizedGrid, gridW, gridH, shape, cellSize, bgCol
         ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
         ctx.beginPath();
         ctx.ellipse(cx, cy, r, r, 0, 0, Math.PI * 2);
+        ctx.fill();
+        if (artistic) ctx.stroke();
+      }
+    }
+    return canvas;
+  }
+
+  if (shape === "diamond" && diamondInterlock) {
+    const colW = cellSize;
+    const rowH = cellSize * interlockRowHeightFactor("diamond", true);
+    const pad = cellSize * 0.04;
+    if (artistic) {
+      ctx.strokeStyle = `rgb(${gridLineColor.join(",")})`;
+      ctx.lineWidth = 1;
+    }
+    for (let row = 0; row < gridH; row++) {
+      const rowOffset = row % 2 === 1 ? colW / 2 : 0;
+      for (let col = 0; col < gridW; col++) {
+        const [cr, cg, cb] = cellFill(row, col);
+        const cx = colW * col + rowOffset + cellSize / 2;
+        const cy = rowH * row + cellSize / 2;
+        const corners = diamondCorners(cx - cellSize / 2, cy - cellSize / 2,
+                                        cx + cellSize / 2, cy + cellSize / 2, pad);
+        ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+        ctx.beginPath();
+        corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+        ctx.closePath();
         ctx.fill();
         if (artistic) ctx.stroke();
       }
@@ -193,9 +225,9 @@ export function renderPaintByNumber(quantizedGrid, gridW, gridH, palette, shape,
                                      createCanvasFn, options = {}) {
   const {
     bgColor = [255, 255, 255], lineColor = [90, 90, 90], textColor = [20, 20, 20],
-    circleInterlock = false,
+    circleInterlock = false, diamondInterlock = false,
   } = options;
-  const [imgW, imgH] = estimateOutputDimensions(gridW, gridH, shape, cellSize, circleInterlock);
+  const [imgW, imgH] = estimateOutputDimensions(gridW, gridH, shape, cellSize, circleInterlock, diamondInterlock);
   const canvas = createCanvasFn(imgW, imgH);
   const ctx = canvas.getContext("2d");
 
@@ -255,9 +287,34 @@ export function renderPaintByNumber(quantizedGrid, gridW, gridH, palette, shape,
     return canvas;
   }
 
-  // square, circle (stacked) & diamond share a plain grid layout for the
-  // printable sheet too -- the outline is always a plain square box (the
-  // actual tile shape doesn't matter for a fill-in-the-number sheet)
+  if (shape === "diamond" && diamondInterlock) {
+    const colW = cellSize;
+    const rowH = cellSize * interlockRowHeightFactor("diamond", true);
+    const pad = cellSize * 0.04;
+    ctx.lineWidth = 1;
+    for (let row = 0; row < gridH; row++) {
+      const rowOffset = row % 2 === 1 ? colW / 2 : 0;
+      for (let col = 0; col < gridW; col++) {
+        const rgb = cellAt(row, col);
+        const cx = colW * col + rowOffset + cellSize / 2;
+        const cy = rowH * row + cellSize / 2;
+        const corners = diamondCorners(cx - cellSize / 2, cy - cellSize / 2,
+                                        cx + cellSize / 2, cy + cellSize / 2, pad);
+        ctx.beginPath();
+        corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+        ctx.closePath();
+        ctx.stroke();
+        const number = numberLookup.get(rgbToHex(rgb));
+        if (number !== undefined) ctx.fillText(String(number), cx, cy);
+      }
+    }
+    return canvas;
+  }
+
+  // square, circle (stacked) & diamond (stacked) share a plain grid layout
+  // for the printable sheet too -- the outline is always a plain square
+  // box (the actual tile shape doesn't matter for a fill-in-the-number
+  // sheet)
   ctx.lineWidth = 1;
   for (let row = 0; row < gridH; row++) {
     for (let col = 0; col < gridW; col++) {

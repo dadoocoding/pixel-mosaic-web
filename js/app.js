@@ -7,7 +7,7 @@ import { rgbToHex, hexToRgb, contrastTextColor } from "./core/color.js";
 import { buildMonochromePalette } from "./core/quantize.js";
 import { imageToGrid } from "./core/grid.js";
 import { renderMosaic, renderBrickMosaic, estimateOutputDimensions, renderPaintByNumber, renderColorKey } from "./core/render.js";
-import { hexHitTest, circleInterlockHitTest } from "./core/shapes.js";
+import { hexHitTest, circleInterlockHitTest, diamondInterlockHitTest, interlockRowHeightFactor } from "./core/shapes.js";
 import { computeEdgeMask } from "./core/edges.js";
 import { splitIntoPanels } from "./core/panels.js";
 import { LEGO_BRICK_SIZES, footprintLabel } from "./core/bricks.js";
@@ -66,6 +66,7 @@ const state = {
   renderedShape: "square",
   renderedCellSize: 36,
   renderedCircleInterlock: false,
+  renderedDiamondInterlock: false,
   outputCanvas: null,
   bgColor: [18, 18, 20],
   monochromeBaseColor: [40, 70, 170],
@@ -76,6 +77,8 @@ const state = {
   shape: "square",
   circleInterlock: false, // "circle" shape only: alternating rows offset +
                            // packed tighter so circles nest instead of stack
+  diamondInterlock: false, // "diamond" shape only: same idea, but diamonds
+                            // pack edge-to-edge with zero gaps
   artistic: false,
   edgeSensitivity: 55,
   edgeMask: null,
@@ -131,6 +134,7 @@ const brickSizeSelections = new Map(LEGO_BRICK_SIZES.map(([w, h]) => [`${w}x${h}
 const $ = (id) => document.getElementById(id);
 
 const el = {
+  sidebar: $("panel"),
   dropZone: $("dropZone"), dropLabel: $("dropLabel"),
   browseBtn: $("browseBtn"), pasteBtn: $("pasteBtn"), fileInput: $("fileInput"),
   sampleImageBtn: $("sampleImageBtn"),
@@ -152,6 +156,7 @@ const el = {
   monoColorBtn: $("monoColorBtn"), monoColorPicker: $("monoColorPicker"),
   shapeSeg: $("shapeSeg"),
   circleInterlock: $("circleInterlock"), circleInterlockLabel: $("circleInterlockLabel"),
+  diamondInterlock: $("diamondInterlock"), diamondInterlockLabel: $("diamondInterlockLabel"),
   artisticStyle: $("artisticStyle"),
   edgeSensitivity: $("edgeSensitivity"), edgeSensitivityVal: $("edgeSensitivityVal"),
   generateBtn: $("generateBtn"), paletteBtn: $("paletteBtn"), sampleSheetBtn: $("sampleSheetBtn"),
@@ -386,12 +391,14 @@ function sampleSourcePixel(x, y) {
 
 function sampleOutputCell(x, y) {
   if (!state.quantizedGrid) return;
-  const { gridW, gridH, renderedShape, renderedCellSize, renderedCircleInterlock } = state;
+  const { gridW, gridH, renderedShape, renderedCellSize, renderedCircleInterlock, renderedDiamondInterlock } = state;
   let rc;
   if (renderedShape === "hexagon") {
     rc = hexHitTest(x, y, gridW, gridH, renderedCellSize);
   } else if (renderedShape === "circle" && renderedCircleInterlock) {
     rc = circleInterlockHitTest(x, y, gridW, gridH, renderedCellSize);
+  } else if (renderedShape === "diamond" && renderedDiamondInterlock) {
+    rc = diamondInterlockHitTest(x, y, gridW, gridH, renderedCellSize);
   } else {
     const col = Math.floor(x / renderedCellSize), row = Math.floor(y / renderedCellSize);
     rc = (row >= 0 && row < gridH && col >= 0 && col < gridW) ? [row, col] : null;
@@ -669,7 +676,15 @@ function openSamplePicker() {
 function syncHeightToAspect() {
   const w = parseInt(el.gridWidth.value, 10);
   const aspect = state.sourceCanvas.height / state.sourceCanvas.width;
-  let h = Math.max(4, Math.round(w * aspect));
+  // Circle/diamond interlock pack rows closer together than a plain grid
+  // (see shapes.js's interlockRowHeightFactor), which flattens the
+  // *output image* relative to a naive gridHeight = gridWidth * aspect --
+  // dividing by the factor adds back the extra rows interlocking needs to
+  // land on the same image aspect ratio as the source photo.
+  const interlock = (state.shape === "circle" && state.circleInterlock)
+    || (state.shape === "diamond" && state.diamondInterlock);
+  const factor = interlockRowHeightFactor(state.shape, interlock);
+  let h = Math.max(4, Math.round((w * aspect) / factor));
   h = Math.min(h, GRID_MAX_CELLS);
   el.gridHeight.value = h;
   el.gridHeightVal.textContent = h;
@@ -679,7 +694,7 @@ function updateSizeEstimate() {
   const gw = parseInt(el.gridWidth.value, 10);
   const gh = parseInt(el.gridHeight.value, 10);
   const cellSize = parseInt(el.cellSize.value, 10);
-  const [w, h] = estimateOutputDimensions(gw, gh, state.shape, cellSize, state.circleInterlock);
+  const [w, h] = estimateOutputDimensions(gw, gh, state.shape, cellSize, state.circleInterlock, state.diamondInterlock);
   const mp = (w * h) / 1e6;
   const mb = (w * h * 3) / 1e6;
   const totalCells = gw * gh;
@@ -838,6 +853,7 @@ function setShape(shape) {
   state.shape = shape;
   [...el.shapeSeg.children].forEach(b => b.classList.toggle("active", b.dataset.shape === shape));
   el.circleInterlockLabel.hidden = shape !== "circle";
+  el.diamondInterlockLabel.hidden = shape !== "diamond";
   updateSizeEstimate();
 }
 
@@ -855,7 +871,8 @@ function rerenderCurrent(resetView = true) {
   if (state.renderedMode === "classic" && state.quantizedGrid) {
     state.outputCanvas = renderMosaic(state.quantizedGrid, state.renderedGridW, state.renderedGridH,
       state.renderedShape, state.renderedCellSize, state.bgColor, makeCanvas,
-      { artistic: state.artistic, edgeMask: state.edgeMask, circleInterlock: state.renderedCircleInterlock });
+      { artistic: state.artistic, edgeMask: state.edgeMask, circleInterlock: state.renderedCircleInterlock,
+        diamondInterlock: state.renderedDiamondInterlock });
     if (state.viewMode === "output") refreshPreview(resetView);
   } else if (state.renderedMode === "adaptive" && state.adaptiveLeaves) {
     state.outputCanvas = renderAdaptiveMosaic(state.adaptiveLeaves, state.renderedGridW, state.renderedGridH,
@@ -904,6 +921,15 @@ function setLayoutMode(mode) {
   // other mode uses -- hide those to avoid showing two unrelated size
   // controls at once.
   el.sharedGridSizeControls.hidden = mode === "rubiks";
+  // Each mode's panel has a very different height (Classic's is long,
+  // Cross-Stitch's is short, etc.), but they all share one scrolling
+  // sidebar. Without this, the sidebar's scroll offset carries over
+  // unchanged across a mode switch -- so scrolling down to reach Classic's
+  // export buttons and then switching to a shorter panel like Cross-Stitch
+  // can leave you scrolled past its Generate button entirely (and it stays
+  // that way switching back, since the offset is still valid there too).
+  // Reset to the top so every mode always starts from its own beginning.
+  el.sidebar.scrollTop = 0;
   // Piece size's "physical size" line depends on which count basis
   // applies (cube count for Rubik's, cell count for everything else), so
   // it needs a recompute on every mode switch too, not just when the
@@ -935,8 +961,24 @@ el.adaptiveRectangles.addEventListener("change", () => {
 
 el.circleInterlock.addEventListener("change", () => {
   state.circleInterlock = el.circleInterlock.checked;
-  updateSizeEstimate();
+  onInterlockChange();
 });
+el.diamondInterlock.addEventListener("change", () => {
+  state.diamondInterlock = el.diamondInterlock.checked;
+  onInterlockChange();
+});
+
+function onInterlockChange() {
+  // Toggling either interlock checkbox changes how many rows are needed
+  // to keep the *output image* at the source photo's aspect ratio (see
+  // syncHeightToAspect) -- interlocking packs rows closer together, so
+  // more rows are needed to reach the same height. Not wired into
+  // setShape too: that function also runs while restoring imported
+  // settings, where gridHeight is already an explicit, deliberately-saved
+  // value that this recompute would silently clobber.
+  if (el.lockAspect.checked && state.sourceCanvas) syncHeightToAspect();
+  updateSizeEstimate();
+}
 
 el.foundObjectNumColors.addEventListener("input", () => {
   el.foundObjectNumColorsVal.textContent = el.foundObjectNumColors.value;
@@ -983,6 +1025,7 @@ async function generateMosaic() {
   const cellSize = parseInt(el.cellSize.value, 10);
   const shape = state.shape;
   const circleInterlock = state.circleInterlock;
+  const diamondInterlock = state.diamondInterlock;
   const bgColor = state.bgColor;
 
   el.generateBtn.disabled = true;
@@ -1020,7 +1063,7 @@ async function generateMosaic() {
       ? computeEdgeMask(state.sourceCanvas, gridW, gridH, state.edgeSensitivity)
       : null;
     const outputCanvas = renderMosaic(quantizedFlat, gridW, gridH, shape, cellSize, bgColor, makeCanvas,
-      { artistic, edgeMask, circleInterlock });
+      { artistic, edgeMask, circleInterlock, diamondInterlock });
 
     state.gridW = gridW;
     state.gridH = gridH;
@@ -1030,6 +1073,7 @@ async function generateMosaic() {
     state.renderedShape = shape;
     state.renderedCellSize = cellSize;
     state.renderedCircleInterlock = circleInterlock;
+    state.renderedDiamondInterlock = diamondInterlock;
     state.renderedGridW = gridW;
     state.renderedGridH = gridH;
     state.renderedMode = "classic";
@@ -2341,7 +2385,7 @@ function exportPaintByNumber() {
   try {
     const page1 = renderPaintByNumber(state.quantizedGrid, state.gridW, state.gridH,
       state.palette, state.renderedShape, state.renderedCellSize, makeCanvas,
-      { circleInterlock: state.renderedCircleInterlock });
+      { circleInterlock: state.renderedCircleInterlock, diamondInterlock: state.renderedDiamondInterlock });
     const counts = colorCounts(state.quantizedGrid, state.palette, state.colorNames);
     const page2 = renderColorKey(state.palette, state.colorNames, counts, makeCanvas);
 
@@ -2394,6 +2438,7 @@ function collectSettings() {
       monochromeBaseColor: rgbToHex(state.monochromeBaseColor),
       shape: state.shape,
       circleInterlock: el.circleInterlock.checked,
+      diamondInterlock: el.diamondInterlock.checked,
       artistic: el.artisticStyle.checked,
       edgeSensitivity: parseInt(el.edgeSensitivity.value, 10),
 
@@ -2459,6 +2504,7 @@ function applySettings(data) {
   }
   if (s.shape) setShape(s.shape);
   if (typeof s.circleInterlock === "boolean") { el.circleInterlock.checked = s.circleInterlock; state.circleInterlock = s.circleInterlock; }
+  if (typeof s.diamondInterlock === "boolean") { el.diamondInterlock.checked = s.diamondInterlock; state.diamondInterlock = s.diamondInterlock; }
   if (typeof s.artistic === "boolean") { el.artisticStyle.checked = s.artistic; state.artistic = s.artistic; }
   if (Number.isFinite(s.edgeSensitivity)) {
     el.edgeSensitivity.value = s.edgeSensitivity;
