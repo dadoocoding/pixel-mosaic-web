@@ -3047,7 +3047,6 @@ function enhanceSliders() {
     plusBtn.setAttribute("aria-label", "Increase");
     plusBtn.addEventListener("click", () => stepBy(1));
 
-<<<<<<< HEAD
     // Click-and-hold auto-repeat: the "click" listeners above already
     // handle a single click (fires once, on a completed press+release), so
     // holding the button down just needs to keep calling stepBy on a timer
@@ -3080,8 +3079,6 @@ function enhanceSliders() {
     bindHoldRepeat(minusBtn, -1);
     bindHoldRepeat(plusBtn, 1);
 
-=======
->>>>>>> 0a9a4d64dac2b629d5f48a30753b2f1b1531851d
     row.insertBefore(minusBtn, input);
     input.after(plusBtn);
 
