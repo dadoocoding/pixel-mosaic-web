@@ -11,7 +11,7 @@ import { hexHitTest, circleInterlockHitTest, diamondInterlockHitTest, interlockR
 import { splitIntoPanels } from "./core/panels.js";
 import { LEGO_BRICK_SIZES, footprintLabel } from "./core/bricks.js";
 import { colorCounts } from "./core/colorCounts.js";
-import { LEGO_SOLID_COLORS, parsePaletteFile } from "./core/palettes.js";
+import { LEGO_SOLID_COLORS, PERLER_BEAD_COLORS, HAMA_BEAD_COLORS, ARTKAL_BEAD_COLORS, parsePaletteFile } from "./core/palettes.js";
 import { buildQuadtree, renderAdaptiveMosaic } from "./core/adaptive.js";
 import {
   imageToGrayGrid, stretchToRange, ditherToPips, pipLevelBrightness,
@@ -23,7 +23,10 @@ import {
 } from "./core/rubiks.js";
 import { renderMetaMosaic } from "./core/meta.js";
 import { renderFoundObjectMosaic } from "./core/foundobject.js";
-import { PIECE_SIZE_UNITS, formatPhysicalSize } from "./core/physicalSize.js";
+import { PIECE_SIZE_UNITS, formatPhysicalSize, ASSEMBLY_SECONDS_PER_PIECE, formatAssemblyTime, formatLithophaneSize } from "./core/physicalSize.js";
+import { POSTER_PAPER_SIZES, renderPosterPages } from "./core/poster.js";
+import { buildColorSeparatedSvg } from "./core/svgExport.js";
+import * as recentProjects from "./core/recentProjects.js";
 import { DMC_RGB_PALETTE } from "./core/dmc.js";
 import {
   dmcColorCounts, crossStitchSymbolMap, renderCrossStitchMosaic,
@@ -33,10 +36,27 @@ import {
   buildGridJson, buildGridCsv, buildPaletteCsv,
   buildBricksJson, buildBricksCsv, buildShoppingListCsv,
   buildAdaptiveTilesJson, buildAdaptiveShoppingListCsv, buildDiceShoppingListCsv,
-  buildRubiksShoppingListCsv, buildCrossStitchShoppingListCsv,
+  buildRubiksShoppingListCsv, buildCrossStitchShoppingListCsv, buildRadialCellsJson,
+  buildStainedglassCellsJson, buildStringartSequenceJson, buildStringartShoppingListCsv,
 } from "./core/exportData.js";
 import { CanvasViewer } from "./ui/canvasViewer.js";
 import { nearestPaintMatchesAllBrands, formatBestMatch } from "./core/paintColors.js";
+import { RADIAL_MAX_CELLS, radialRingSegments, radialCellCount, sampleRadialColors, renderRadialMosaic } from "./core/radial.js";
+import {
+  STAINEDGLASS_MAX_CELLS, poissonDiscPoints, estimateStainedglassPieceCount,
+  stainedglassCanvasSize, sampleStainedglassColors, renderStainedglassMosaic,
+} from "./core/stainedglass.js";
+import {
+  LITHOPHANE_MIN_SAMPLES_ACROSS, LITHOPHANE_MAX_SAMPLES_ACROSS, LITHOPHANE_MAX_TRIANGLES,
+  lithophaneSampleGridSize, estimateLithophaneTriangleCount, sampleLithophaneHeightmap,
+  renderLithophanePreview, buildLithophaneStl,
+} from "./core/lithophane.js";
+import {
+  STRINGART_MIN_PINS, STRINGART_MAX_PINS, STRINGART_MIN_LINES, STRINGART_MAX_LINES,
+  STRINGART_WORKING_SIZE, stringartPinPositions, sampleStringartTarget, renderStringartPreview,
+  estimateStringartThreadLength, formatStringartFrameSize, formatStringartThreadLength,
+  renderStringartPinMap, renderStringartSequencePage,
+} from "./core/stringart.js";
 
 // Raised from 240 for Counted Cross-Stitch mode's higher-resolution
 // patterns; applies to every mode since they share these sliders.
@@ -57,6 +77,21 @@ const SAMPLE_IMAGES = [
 const state = {
   sourceCanvas: null,
   sourceFileName: "",
+  // Recent Projects: null until the first successful generate after a photo
+  // is loaded, at which point it's the id of that project's record in
+  // IndexedDB (see js/core/recentProjects.js) -- every later re-generate of
+  // the *same* loaded photo passes this id back in so it updates one entry
+  // instead of spawning a new one each time. Cleared whenever a new photo
+  // is loaded (applyLoadedImage). Mirrors the desktop app's
+  // self._current_project_id.
+  currentProjectId: null,
+  // Batch Mode: an ephemeral (session-only, not persisted to IndexedDB
+  // across page reloads) ordered list of Recent Projects ids currently in
+  // the active batch. Uploading a batch registers each photo as a
+  // *pending* record (see recentProjects.createPending) and stores the
+  // resulting ids here; uploading a new batch replaces it. Mirrors the
+  // desktop app's self._current_batch_ids.
+  currentBatchIds: [],
   gridW: 40,
   gridH: 40,
   quantizedGrid: null,   // flat [r,g,b] array, row-major
@@ -82,6 +117,9 @@ const state = {
   brickCanvas: null,
   sampledHex: null,
   viewMode: "source",
+  // Before/After compare view: 0-1 fraction, mirrors the desktop app's
+  // self._compare_fraction -- see renderCompare() for what it means.
+  compareFraction: 0.5,
 
   // Layout mode (Classic Grid / Adaptive / Dice) -- see _on_layout_mode_change
   // in the desktop app for the equivalent. renderedMode tracks what's
@@ -119,6 +157,82 @@ const state = {
   foundObjectPalette: null,
   foundObjectImages: new Map(),  // "r,g,b" -> source canvas (the uploaded photo)
   foundObjectImageNames: new Map(), // "r,g,b" -> uploaded file name, for the summary
+
+  // Radial mode: rings of pie-slice/annular-sector cells instead of a
+  // rectangular grid -- no quantizedGrid 2D shape to reuse, so its
+  // quantized colors are kept as their own flat list (see
+  // core/radial.js's sampleRadialColors/renderRadialMosaic). renderedGridW/
+  // renderedGridH double as 2*rings (see posterGridCounts) so Poster
+  // export's DPI derivation works unchanged for this mode too.
+  radialRings: 10,
+  radialBaseSegments: 6,
+  radialNumColors: 0,
+  radialQuantized: null,
+  renderedRadialRings: null,
+  renderedRadialBaseSegments: null,
+
+  // Stained Glass mode: irregular Voronoi-cell pieces from a blue-noise
+  // scatter of seed points -- like Radial, no 2D grid shape to reuse, so
+  // quantized colors/seed points are kept as their own flat lists (see
+  // core/stainedglass.js). renderedGridW/renderedGridH double as a nominal
+  // "pieces across/down" at the actual average piece spacing (see
+  // posterGridCounts), same trick Radial uses, so Poster export's DPI
+  // derivation works unchanged for this mode too. renderedStainedglassMinDist
+  // is the piece spacing the *rendered* output actually used, kept separate
+  // from the live Cell Size slider so a cheap lead-line-only re-render or a
+  // physical-size estimate never silently mixes in a since-changed slider
+  // value before the next full Generate.
+  stainedglassPieceCount: 150,
+  stainedglassNumColors: 0,
+  stainedglassLeadWidth: 3,
+  stainedglassLeadColor: [20, 20, 20],
+  stainedglassSeed: 1,
+  stainedglassPoints: null,
+  stainedglassQuantized: null,
+  stainedglassCanvasW: null,
+  stainedglassCanvasH: null,
+  stainedglassActualCellCount: null,
+  renderedStainedglassMinDist: null,
+
+  // Lithophane mode: a single continuous backlit height-map, exported as
+  // a real STL mesh -- no 2D palette/grid at all, so most of the shared
+  // state (palette, colorNames, renderedGridW/H) simply doesn't apply.
+  // lithophaneHeightmap is the thickness-in-mm array the last successful
+  // Generate produced (what Save STL exports), kept separate from the
+  // live width/height/thickness fields so a stale Generate's export never
+  // silently picks up settings changed since.
+  lithophaneWidthMm: 100,
+  lithophaneHeightMm: 75,
+  lithophaneLockAspect: true,
+  lithophaneDetail: 150,
+  lithophaneMinThickness: 0.8,
+  lithophaneMaxThickness: 3.2,
+  lithophaneInvert: false,
+  lithophaneHeightmap: null,
+  lithophaneSamplesW: null,
+  lithophaneSamplesH: null,
+  lithophaneRenderedWidthMm: null,
+  lithophaneRenderedHeightMm: null,
+
+  // String Art mode: pins around a circular or rectangular frame,
+  // connected by one continuous thread. stringartSequence/-Positions/
+  // -Canvas are the last successful Generate's greedy-algorithm output
+  // (thread order, pin (x,y) positions, and the raw darkness canvas),
+  // kept separate from the live shape/pin/line controls so a stale
+  // Generate's export or cheap thread/bg-color re-render never silently
+  // picks up settings changed since. stringartCanvas is what
+  // rerenderCurrent re-colors cheaply -- changing thread/bg color never
+  // re-runs the greedy algorithm.
+  stringartThreadColor: [20, 20, 20],
+  stringartBgColor: [250, 250, 245],
+  stringartSequence: null,
+  stringartPositions: null,
+  stringartCanvas: null,
+  stringartShape: "circle",
+  stringartNumPins: null,
+  stringartFrameSize: null,
+  stringartFrameSizeUnit: "in",
+  stringartThreadLength: null,
 };
 
 const brickSizeSelections = new Map(LEGO_BRICK_SIZES.map(([w, h]) => [`${w}x${h}`, true]));
@@ -147,6 +261,8 @@ const el = {
   layoutModeSeg: $("layoutModeSeg"),
   classicPanel: $("classicPanel"), adaptivePanel: $("adaptivePanel"), dicePanel: $("dicePanel"),
   rubiksPanel: $("rubiksPanel"), metaPanel: $("metaPanel"), foundobjectPanel: $("foundobjectPanel"),
+  radialPanel: $("radialPanel"), stainedglassPanel: $("stainedglassPanel"),
+  lithophanePanel: $("lithophanePanel"), stringartPanel: $("stringartPanel"),
   colorSourceSeg: $("colorSourceSeg"), colorsLabel: $("colorsLabel"),
   numColors: $("numColors"), numColorsVal: $("numColorsVal"),
   fixedPaletteLabel: $("fixedPaletteLabel"), choosePaletteBtn: $("choosePaletteBtn"),
@@ -195,14 +311,58 @@ const el = {
   panelEstimate: $("panelEstimate"), exportPanelsBtn: $("exportPanelsBtn"),
   exportPreviewBtn: $("exportPreviewBtn"),
   exportPngBtn: $("exportPngBtn"), exportJsonBtn: $("exportJsonBtn"), previewJsonBtn: $("previewJsonBtn"),
+  posterPaper: $("posterPaper"), exportPosterBtn: $("exportPosterBtn"), previewPosterBtn: $("previewPosterBtn"),
   exportCsvBtn: $("exportCsvBtn"), previewCsvBtn: $("previewCsvBtn"),
   exportPaintByNumberBtn: $("exportPaintByNumberBtn"), previewPaintByNumberBtn: $("previewPaintByNumberBtn"),
+  exportSvgBtn: $("exportSvgBtn"), previewSvgBtn: $("previewSvgBtn"),
   viewToggle: $("viewToggle"),
+  compareRow: $("compareRow"), compareSlider: $("compareSlider"),
   zoomInBtn: $("zoomInBtn"), zoomOutBtn: $("zoomOutBtn"), zoomFitBtn: $("zoomFitBtn"),
   previewCanvas: $("previewCanvas"), previewSaveOverlay: $("previewSaveOverlay"),
   sampleSwatch: $("sampleSwatch"), sampleInfo: $("sampleInfo"), copyHexBtn: $("copyHexBtn"),
   statusLine: $("statusLine"),
   dialogRoot: $("dialogRoot"),
+  brickPrice: $("brickPrice"), classicPrice: $("classicPrice"),
+  adaptivePrice: $("adaptivePrice"), dicePrice: $("dicePrice"),
+  rubiksPrice: $("rubiksPrice"), crossstitchPrice: $("crossstitchPrice"),
+  foundobjectPrice: $("foundobjectPrice"),
+  radialRings: $("radialRings"), radialRingsVal: $("radialRingsVal"),
+  radialBaseSegments: $("radialBaseSegments"), radialBaseSegmentsVal: $("radialBaseSegmentsVal"),
+  radialCellEstimate: $("radialCellEstimate"),
+  radialNumColors: $("radialNumColors"), radialNumColorsVal: $("radialNumColorsVal"),
+  radialGenerateBtn: $("radialGenerateBtn"), radialPrice: $("radialPrice"),
+  exportRadialCellsBtn: $("exportRadialCellsBtn"), previewRadialCellsBtn: $("previewRadialCellsBtn"),
+  exportRadialShoppingBtn: $("exportRadialShoppingBtn"), previewRadialShoppingBtn: $("previewRadialShoppingBtn"),
+  stainedglassPieceCount: $("stainedglassPieceCount"), stainedglassPieceCountVal: $("stainedglassPieceCountVal"),
+  stainedglassPieceEstimate: $("stainedglassPieceEstimate"),
+  stainedglassNumColors: $("stainedglassNumColors"), stainedglassNumColorsVal: $("stainedglassNumColorsVal"),
+  stainedglassLeadWidth: $("stainedglassLeadWidth"), stainedglassLeadWidthVal: $("stainedglassLeadWidthVal"),
+  stainedglassLeadColorBtn: $("stainedglassLeadColorBtn"), stainedglassLeadColorPicker: $("stainedglassLeadColorPicker"),
+  stainedglassSeed: $("stainedglassSeed"), stainedglassNewLayoutBtn: $("stainedglassNewLayoutBtn"),
+  stainedglassGenerateBtn: $("stainedglassGenerateBtn"), stainedglassPrice: $("stainedglassPrice"),
+  exportStainedglassCellsBtn: $("exportStainedglassCellsBtn"), previewStainedglassCellsBtn: $("previewStainedglassCellsBtn"),
+  exportStainedglassShoppingBtn: $("exportStainedglassShoppingBtn"), previewStainedglassShoppingBtn: $("previewStainedglassShoppingBtn"),
+  lithophaneWidth: $("lithophaneWidth"), lithophaneHeight: $("lithophaneHeight"),
+  lithophaneLockAspect: $("lithophaneLockAspect"),
+  lithophaneDetail: $("lithophaneDetail"), lithophaneDetailVal: $("lithophaneDetailVal"),
+  lithophaneEstimate: $("lithophaneEstimate"),
+  lithophaneMinThickness: $("lithophaneMinThickness"), lithophaneMaxThickness: $("lithophaneMaxThickness"),
+  lithophaneInvert: $("lithophaneInvert"), lithophaneGenerateBtn: $("lithophaneGenerateBtn"),
+  exportLithophaneStlBtn: $("exportLithophaneStlBtn"),
+  stringartShapeSeg: $("stringartShapeSeg"),
+  stringartPins: $("stringartPins"), stringartPinsVal: $("stringartPinsVal"),
+  stringartLines: $("stringartLines"), stringartLinesVal: $("stringartLinesVal"),
+  stringartEstimate: $("stringartEstimate"),
+  stringartFrameSize: $("stringartFrameSize"), stringartFrameSizeUnit: $("stringartFrameSizeUnit"),
+  stringartThreadColorBtn: $("stringartThreadColorBtn"), stringartThreadColorPicker: $("stringartThreadColorPicker"),
+  stringartBgColorBtn: $("stringartBgColorBtn"), stringartBgColorPicker: $("stringartBgColorPicker"),
+  stringartGenerateBtn: $("stringartGenerateBtn"), stringartPrice: $("stringartPrice"),
+  exportStringartGuideBtn: $("exportStringartGuideBtn"), previewStringartGuideBtn: $("previewStringartGuideBtn"),
+  exportStringartSequenceBtn: $("exportStringartSequenceBtn"), previewStringartSequenceBtn: $("previewStringartSequenceBtn"),
+  exportStringartShoppingBtn: $("exportStringartShoppingBtn"), previewStringartShoppingBtn: $("previewStringartShoppingBtn"),
+  recentProjectsBtn: $("recentProjectsBtn"),
+  batchUploadBtn: $("batchUploadBtn"), batchFileInput: $("batchFileInput"),
+  batchModeBtn: $("batchModeBtn"),
 };
 
 // ---------------------------------------------------------------------------
@@ -255,6 +415,17 @@ function downloadText(text, filename, mime) {
   downloadBlob(new Blob([text], { type: mime }), filename);
 }
 
+// Parses an optional "$ price per X" input's text as a non-negative price,
+// or null if it's blank/unparsable -- mirrors Python's _get_price exactly,
+// so a blank/invalid field just means "no cost estimate", never an error.
+function getPrice(inputEl) {
+  const text = inputEl.value.trim();
+  if (!text) return null;
+  const value = parseFloat(text);
+  if (Number.isNaN(value) || value < 0) return null;
+  return value;
+}
+
 function setSwatchButton(btn, rgb) {
   const hex = rgbToHex(rgb);
   btn.textContent = hex;
@@ -272,6 +443,11 @@ const viewer = new CanvasViewer(el.previewCanvas, {
 });
 
 function refreshPreview(resetView = true) {
+  // The compare slider row only makes sense (and is only shown) while
+  // "Compare" is the active view -- toggled here since every view switch
+  // and every re-generate routes through this one function.
+  el.compareRow.hidden = state.viewMode !== "compare";
+
   let shown = null;
   if (state.viewMode === "source") {
     if (state.sourceCanvas) { viewer.setImage(state.sourceCanvas, { resetView }); shown = state.sourceCanvas; }
@@ -279,12 +455,63 @@ function refreshPreview(resetView = true) {
   } else if (state.viewMode === "bricks") {
     if (state.brickCanvas) { viewer.setImage(state.brickCanvas, { resetView }); shown = state.brickCanvas; }
     else viewer.showPlaceholder("Optimize into bricks first (see the left panel)");
+  } else if (state.viewMode === "compare") {
+    if (state.sourceCanvas && state.outputCanvas) {
+      shown = renderCompare(resetView);
+    } else {
+      viewer.showPlaceholder("Generate a mosaic, then drag the slider above to compare it with the original");
+    }
   } else {
     if (state.outputCanvas) { viewer.setImage(state.outputCanvas, { resetView }); shown = state.outputCanvas; }
     else viewer.showPlaceholder("Generate a mosaic to see the output here");
   }
   updateSaveOverlay(shown);
 }
+
+// Before/After compare -- see the desktop app's _render_compare for the
+// full reasoning; ported here 1:1. The slider is a reveal control, not a
+// static left/right split: at 0 ("Before" end) the composite is 100% the
+// original photo; at 1 ("After" end) it's 100% the mosaic; in between, the
+// mosaic is revealed starting from the left edge, growing rightward.
+let compareCache = { canvas: null, w: 0, h: 0, source: null };
+
+function buildCompareBeforeCanvas(outW, outH) {
+  if (compareCache.canvas && compareCache.w === outW && compareCache.h === outH
+      && compareCache.source === state.sourceCanvas) {
+    return compareCache.canvas;
+  }
+  const c = makeCanvas(outW, outH);
+  c.getContext("2d").drawImage(state.sourceCanvas, 0, 0, outW, outH);
+  compareCache = { canvas: c, w: outW, h: outH, source: state.sourceCanvas };
+  return c;
+}
+
+function renderCompare(resetView) {
+  const outW = state.outputCanvas.width, outH = state.outputCanvas.height;
+  const before = buildCompareBeforeCanvas(outW, outH);
+  const composite = makeCanvas(outW, outH);
+  const ctx = composite.getContext("2d");
+  ctx.drawImage(before, 0, 0);
+  const dividerX = Math.max(0, Math.min(outW, Math.round(outW * state.compareFraction)));
+  if (dividerX > 0) {
+    ctx.drawImage(state.outputCanvas, 0, 0, dividerX, outH, 0, 0, dividerX, outH);
+  }
+  if (dividerX > 0 && dividerX < outW) {
+    const lineW = Math.max(2, Math.round(outW / 300));
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(Math.max(0, dividerX - lineW / 2), 0, lineW, outH);
+  }
+  viewer.setImage(composite, { resetView });
+  return composite;
+}
+
+el.compareSlider.addEventListener("input", () => {
+  state.compareFraction = parseInt(el.compareSlider.value, 10) / 100;
+  // Mirrors refreshPreview()'s shown-canvas -> save-overlay hookup (see its
+  // comment) -- renderCompare() alone only repaints the zoomable canvas,
+  // not the mobile save overlay, which would otherwise go stale on drag.
+  if (state.viewMode === "compare") updateSaveOverlay(renderCompare(false));
+});
 
 // Mirrors whatever's currently shown into a real <img> (see the CSS
 // comment on #previewSaveOverlay) so mobile browsers offer a native
@@ -383,6 +610,7 @@ el.zoomFitBtn.addEventListener("click", () => viewer.zoomReset());
 function onCanvasClick(x, y) {
   if (state.viewMode === "source") sampleSourcePixel(x, y);
   else if (state.viewMode === "bricks") sampleBrickCell(x, y);
+  else if (state.viewMode === "compare") return; // composite mixes two coordinate spaces -- no meaningful sample
   else sampleOutputCell(x, y);
 }
 
@@ -510,6 +738,7 @@ async function loadImageFromURL(url) {
 function applyLoadedImage(canvas, displayName) {
   state.sourceCanvas = canvas;
   state.sourceFileName = displayName;
+  state.currentProjectId = null;  // new photo -> next generate starts a new Recent Projects entry
   el.dropLabel.textContent = `Loaded: ${displayName}\n(${canvas.width}\u00d7${canvas.height})`;
 
   state.quantizedGrid = null;
@@ -527,6 +756,24 @@ function applyLoadedImage(canvas, displayName) {
   state.foundObjectImages = new Map();
   state.foundObjectImageNames = new Map();
   el.foundObjectSummary.textContent = "";
+  state.radialQuantized = null;
+  state.stainedglassPoints = null;
+  state.stainedglassQuantized = null;
+  state.stainedglassCanvasW = null;
+  state.stainedglassCanvasH = null;
+  state.stainedglassActualCellCount = null;
+  state.renderedStainedglassMinDist = null;
+  state.lithophaneHeightmap = null;
+  state.lithophaneSamplesW = null;
+  state.lithophaneSamplesH = null;
+  state.lithophaneRenderedWidthMm = null;
+  state.lithophaneRenderedHeightMm = null;
+  state.stringartSequence = null;
+  state.stringartPositions = null;
+  state.stringartCanvas = null;
+  state.stringartNumPins = null;
+  state.stringartFrameSize = null;
+  state.stringartThreadLength = null;
   state.renderedMode = state.layoutMode;
   clearBrickLayout();
   disableGenerationDependentButtons();
@@ -537,15 +784,24 @@ function applyLoadedImage(canvas, displayName) {
   el.metaGenerateBtn.disabled = false;
   el.crossstitchGenerateBtn.disabled = false;
   el.foundObjectGenerateBtn.disabled = false;
+  el.radialGenerateBtn.disabled = false;
+  el.stainedglassGenerateBtn.disabled = false;
+  el.lithophaneGenerateBtn.disabled = false;
+  el.stringartGenerateBtn.disabled = false;
   resetSampleDisplay();
 
   if (el.lockAspect.checked) syncHeightToAspect();
   if (el.lockAspectRubiks.checked) syncCubesTallToAspect();
+  if (el.lithophaneLockAspect.checked) onLithophaneWidthChange();
 
   setViewMode("source");
   updateSizeEstimate();
   updatePanelEstimate();
   updateRubiksSizeEstimate();
+  updateRadialCellEstimate();
+  updateStainedglassPieceEstimate();
+  updateLithophaneEstimate();
+  updateStringartEstimate();
   setStatus("Image loaded. Adjust settings and click Generate.");
 }
 
@@ -555,6 +811,21 @@ el.fileInput.addEventListener("change", () => {
   if (file) loadImageFromFile(file);
   el.fileInput.value = "";
 });
+
+// Upload a Batch: a separate, multi-file control (deliberately not folded
+// into the single-file browse/drop/paste flows above, to avoid regression
+// risk there) that starts a new Batch Mode session -- see the Batch Mode
+// section near the bottom of this file for createBatch() and friends.
+el.batchUploadBtn.addEventListener("click", () => el.batchFileInput.click());
+el.batchFileInput.addEventListener("change", () => {
+  const files = Array.from(el.batchFileInput.files || []);
+  el.batchFileInput.value = "";
+  if (files.length) createBatch(files);
+});
+// Reopens the dialog for whatever batch is currently active (or shows its
+// "no batch active" empty state) -- the only other way back into it once
+// closed is Generate All finishing, which reopens it automatically.
+el.batchModeBtn.addEventListener("click", openBatchMode);
 
 el.dropZone.addEventListener("dragover", (e) => {
   e.preventDefault();
@@ -765,6 +1036,100 @@ function updateRubiksSizeEstimate() {
  * visual groups (bricks, adaptive leaves, etc) -- the finished object is
  * always that many pieces across, wide. */
 function updatePhysicalSizeEstimate() {
+  if (state.layoutMode === "radial") {
+    // Rings/segments has no natural width x height rectangle to size
+    // against the piece-size unit the way every other mode's grid does --
+    // skip the physical-size estimate rather than reusing an unrelated
+    // pair of sliders for a misleading number.
+    el.physicalSizeEstimate.textContent = "";
+    return;
+  }
+
+  if (state.layoutMode === "stainedglass") {
+    // Unlike Radial, blue-noise spacing between pieces IS a real, fairly
+    // consistent physical measurement (that's the point of choosing blue
+    // noise over pure-random scatter), so a nominal "pieces across the
+    // canvas at this spacing" count stands in for width x height here --
+    // exact once something's actually been generated (from the rendered
+    // canvas size), an estimate (marked "~") from the live piece-count
+    // slider before that, same formula the live piece-estimate label uses.
+    const pieceSizeSg = parseFloat(el.pieceSize.value) || 0;
+    const unitSg = el.pieceSizeUnit.value;
+    const minDist = parseInt(el.cellSize.value, 10);
+    let countW, countH, actualCount, approx;
+    if (state.renderedMode === "stainedglass" && state.stainedglassCanvasW !== null) {
+      countW = state.renderedGridW; countH = state.renderedGridH;
+      actualCount = state.stainedglassActualCellCount || (countW * countH);
+      approx = "";
+    } else {
+      const targetCount = parseInt(el.stainedglassPieceCount.value, 10);
+      const aspect = state.sourceCanvas ? state.sourceCanvas.width / state.sourceCanvas.height : 1.0;
+      const [canvasW, canvasH] = stainedglassCanvasSize(Math.round(aspect * 1000), 1000, targetCount, minDist);
+      countW = Math.max(1, Math.round(canvasW / minDist));
+      countH = Math.max(1, Math.round(canvasH / minDist));
+      actualCount = estimateStainedglassPieceCount(canvasW, canvasH, minDist);
+      approx = "~";
+    }
+    const formattedSg = formatPhysicalSize(countW, countH, pieceSizeSg, unitSg);
+    const partsSg = [];
+    if (formattedSg) {
+      partsSg.push(`Physical size: ${approx}${formattedSg}  (≈${countW}×${countH} pieces across)`);
+    }
+    const secondsPerPieceSg = ASSEMBLY_SECONDS_PER_PIECE.stainedglass;
+    if (secondsPerPieceSg) {
+      const timeTextSg = formatAssemblyTime(actualCount, secondsPerPieceSg);
+      if (timeTextSg) {
+        partsSg.push(`Assembly time: ${approx}${timeTextSg} (rough estimate, ~${secondsPerPieceSg}s/piece)`);
+      }
+    }
+    el.physicalSizeEstimate.textContent = partsSg.join("   •   ");
+    return;
+  }
+
+  if (state.layoutMode === "stringart") {
+    // A single continuous thread path around a frame, not a countW x
+    // countH grid of pieces, so this shows the mode's own frame size plus
+    // an estimated thread length directly (formatStringartFrameSize/
+    // formatStringartThreadLength) rather than formatPhysicalSize's
+    // piece-count multiplication -- mirrors mosaic_gui.py's
+    // MosaicApp._update_physical_size_estimate stringart branch exactly.
+    // No Assembly time either, same reasoning as Lithophane: there's no
+    // per-piece build step, just following the pin sequence.
+    const frameSize = parseFloat(el.stringartFrameSize.value) || 0;
+    const unit = el.stringartFrameSizeUnit.value;
+    const shape = [...el.stringartShapeSeg.children].find(b => b.classList.contains("active")).dataset.shape;
+    const formatted = formatStringartFrameSize(shape, frameSize, unit);
+    const parts = [];
+    if (formatted) parts.push(formatted);
+    if (state.renderedMode === "stringart" && state.stringartThreadLength !== null) {
+      const lengthText = formatStringartThreadLength(state.stringartThreadLength, state.stringartFrameSizeUnit);
+      if (lengthText) parts.push(lengthText);
+      parts.push(`${state.stringartSequence.length - 1} thread lines / ${state.stringartNumPins} pins`);
+    }
+    el.physicalSizeEstimate.textContent = parts.join("   •   ");
+    return;
+  }
+
+  if (state.layoutMode === "lithophane") {
+    // A lithophane is a single continuous printed object sized directly in
+    // mm (width/height/thickness), not a countW x countH grid of pieces,
+    // so it gets its own formatter (formatLithophaneSize) rather than
+    // formatPhysicalSize's piece-count multiplication -- mirrors
+    // mosaic_gui.py's MosaicApp._update_physical_size_estimate lithophane
+    // branch exactly.
+    const widthMm = getLithophaneFloat(el.lithophaneWidth, 100);
+    const heightMm = getLithophaneFloat(el.lithophaneHeight, 75);
+    const maxThickness = getLithophaneFloat(el.lithophaneMaxThickness, 3.2);
+    const formatted = formatLithophaneSize(widthMm, heightMm, maxThickness);
+    const partsLi = [];
+    if (formatted) partsLi.push(`Print size: ${formatted}`);
+    if (state.renderedMode === "lithophane" && state.lithophaneSamplesW !== null) {
+      partsLi.push(`${state.lithophaneSamplesW}×${state.lithophaneSamplesH} height samples`);
+    }
+    el.physicalSizeEstimate.textContent = partsLi.join("   •   ");
+    return;
+  }
+
   const pieceSize = parseFloat(el.pieceSize.value) || 0;
   const unit = el.pieceSizeUnit.value;
 
@@ -780,13 +1145,21 @@ function updatePhysicalSizeEstimate() {
   }
 
   const formatted = formatPhysicalSize(countW, countH, pieceSize, unit);
+  const parts = [];
   if (formatted) {
     const plural = countW * countH !== 1 ? "s" : "";
-    el.physicalSizeEstimate.textContent =
-      `Physical size: ${formatted}  (${countW}\u00d7${countH} ${pieceWord}${plural})`;
-  } else {
-    el.physicalSizeEstimate.textContent = "";
+    parts.push(`Physical size: ${formatted}  (${countW}\u00d7${countH} ${pieceWord}${plural})`);
   }
+
+  const secondsPerPiece = ASSEMBLY_SECONDS_PER_PIECE[state.layoutMode];
+  if (secondsPerPiece) {
+    const timeText = formatAssemblyTime(countW * countH, secondsPerPiece);
+    if (timeText) {
+      parts.push(`Assembly time: ${timeText} (rough estimate, ~${secondsPerPiece}s/${pieceWord})`);
+    }
+  }
+
+  el.physicalSizeEstimate.textContent = parts.join("   \u2022   ");
 }
 
 el.gridWidth.addEventListener("input", () => {
@@ -809,6 +1182,7 @@ el.cellSize.addEventListener("input", () => {
   el.cellSizeVal.textContent = el.cellSize.value;
   updateSizeEstimate();
   updateRubiksSizeEstimate();
+  updateStainedglassPieceEstimate();
 });
 el.pieceSize.addEventListener("input", updatePhysicalSizeEstimate);
 el.pieceSizeUnit.addEventListener("change", updatePhysicalSizeEstimate);
@@ -915,6 +1289,22 @@ function rerenderCurrent(resetView = true) {
     state.outputCanvas = renderRubiksMosaic(state.rubiksGrid, state.renderedGridW, state.renderedGridH,
       state.renderedCellSize, makeCanvas, { bgColor: state.bgColor });
     if (state.viewMode === "output") refreshPreview(resetView);
+  } else if (state.renderedMode === "radial" && state.radialQuantized) {
+    state.outputCanvas = renderRadialMosaic(state.radialQuantized, state.renderedRadialRings,
+      state.renderedRadialBaseSegments, state.renderedCellSize, state.bgColor, makeCanvas);
+    if (state.viewMode === "output") refreshPreview(resetView);
+  } else if (state.renderedMode === "stainedglass" && state.stainedglassQuantized) {
+    const leadWidth = parseInt(el.stainedglassLeadWidth.value, 10);
+    state.outputCanvas = renderStainedglassMosaic(
+      state.stainedglassQuantized, state.stainedglassPoints,
+      state.stainedglassCanvasW, state.stainedglassCanvasH, state.renderedStainedglassMinDist,
+      leadWidth, state.stainedglassLeadColor, makeCanvas);
+    if (state.viewMode === "output") refreshPreview(resetView);
+  } else if (state.renderedMode === "stringart" && state.stringartCanvas) {
+    state.outputCanvas = renderStringartPreview(
+      state.stringartCanvas, state.stringartShape, STRINGART_WORKING_SIZE,
+      state.stringartThreadColor, state.stringartBgColor, makeCanvas);
+    if (state.viewMode === "output") refreshPreview(resetView);
   }
 }
 
@@ -945,11 +1335,21 @@ function setLayoutMode(mode) {
   el.metaPanel.hidden = mode !== "meta";
   el.crossstitchPanel.hidden = mode !== "crossstitch";
   el.foundobjectPanel.hidden = mode !== "foundobject";
-  // Rubik's Cube mode sizes itself in cube units (cubesWide/cubesTall)
+  el.radialPanel.hidden = mode !== "radial";
+  el.stainedglassPanel.hidden = mode !== "stainedglass";
+  el.lithophanePanel.hidden = mode !== "lithophane";
+  el.stringartPanel.hidden = mode !== "stringart";
+  // Rubik's Cube mode sizes itself in cube units (cubesWide/cubesTall),
+  // Radial mode in rings/base segments (radialRings/radialBaseSegments),
+  // Stained Glass in a target piece count (stainedglassPieceCount),
+  // Lithophane in a physical width/height in mm plus a detail slider, and
+  // String Art in its own pin/line-count sliders plus a frame-size field,
   // rather than the shared cell-based Grid width/height sliders every
   // other mode uses -- hide those to avoid showing two unrelated size
   // controls at once.
-  el.sharedGridSizeControls.hidden = mode === "rubiks";
+  el.sharedGridSizeControls.hidden =
+    mode === "rubiks" || mode === "radial" || mode === "stainedglass" || mode === "lithophane"
+    || mode === "stringart";
   // Each mode's panel has a very different height (Classic's is long,
   // Cross-Stitch's is short, etc.), but they all share one scrolling
   // sidebar. Without this, the sidebar's scroll offset carries over
@@ -976,6 +1376,210 @@ el.adaptiveSensitivity.addEventListener("input", () => {
   el.adaptiveSensitivityVal.textContent = el.adaptiveSensitivity.value;
   state.adaptiveSensitivity = parseInt(el.adaptiveSensitivity.value, 10);
 });
+
+el.radialRings.addEventListener("input", () => {
+  el.radialRingsVal.textContent = el.radialRings.value;
+  updateRadialCellEstimate();
+});
+el.radialBaseSegments.addEventListener("input", () => {
+  el.radialBaseSegmentsVal.textContent = el.radialBaseSegments.value;
+  updateRadialCellEstimate();
+});
+el.radialNumColors.addEventListener("input", () => {
+  el.radialNumColorsVal.textContent = el.radialNumColors.value;
+});
+
+/** Live "-> N cells total" hint below the Rings/Base segments sliders,
+ * mirroring updatePanelEstimate's live-recompute pattern. */
+function updateRadialCellEstimate() {
+  if (!el.radialCellEstimate || !el.radialRings || !el.radialBaseSegments) return;
+  const rings = parseInt(el.radialRings.value, 10);
+  const baseSegments = parseInt(el.radialBaseSegments.value, 10);
+  const cellCount = radialCellCount(rings, baseSegments);
+  const outerSegments = radialRingSegments(rings - 1, baseSegments);
+  let text = `→ ${cellCount.toLocaleString()} cells total (${outerSegments} segments in the outermost ring)`;
+  if (cellCount > RADIAL_MAX_CELLS) {
+    text += ` — over the ${RADIAL_MAX_CELLS.toLocaleString()} limit, reduce rings/segments`;
+  }
+  el.radialCellEstimate.textContent = text;
+}
+
+el.stainedglassPieceCount.addEventListener("input", () => {
+  el.stainedglassPieceCountVal.textContent = el.stainedglassPieceCount.value;
+  updateStainedglassPieceEstimate();
+});
+el.stainedglassNumColors.addEventListener("input", () => {
+  el.stainedglassNumColorsVal.textContent = el.stainedglassNumColors.value;
+});
+el.stainedglassLeadWidth.addEventListener("input", () => {
+  el.stainedglassLeadWidthVal.textContent = el.stainedglassLeadWidth.value;
+  // Lead width only affects *rendering* (the boundary-dilation pass), not
+  // which pixels belong to which seed -- same cheap-re-render reasoning as
+  // die/pip color, not a full pipeline re-run.
+  rerenderCurrent(false);
+});
+el.stainedglassLeadColorBtn.addEventListener("click", () => el.stainedglassLeadColorPicker.click());
+el.stainedglassLeadColorPicker.addEventListener("input", () => {
+  state.stainedglassLeadColor = hexToRgb(el.stainedglassLeadColorPicker.value);
+  setSwatchButton(el.stainedglassLeadColorBtn, state.stainedglassLeadColor);
+  rerenderCurrent(false);
+});
+el.stainedglassNewLayoutBtn.addEventListener("click", () => {
+  el.stainedglassSeed.value = String(randomStainedglassSeed());
+  if (state.sourceCanvas && state.layoutMode === "stainedglass") generateStainedglassMosaic();
+});
+
+function randomStainedglassSeed() {
+  return Math.floor(Math.random() * 2147483647);
+}
+
+/** Parses the seed field as a non-negative integer. An unparsable or
+ * missing value is treated the same way a fresh "New Layout" click is --
+ * a new random seed is picked and written back into the field -- rather
+ * than silently falling back to some fixed constant, since a blank/garbled
+ * seed field was never a deliberate choice to preserve. */
+function getStainedglassSeed() {
+  const value = parseInt(el.stainedglassSeed.value, 10);
+  if (Number.isFinite(value) && value >= 0) return value;
+  const newSeed = randomStainedglassSeed();
+  el.stainedglassSeed.value = String(newSeed);
+  return newSeed;
+}
+
+/** Live "≈ N pieces at this spacing" hint below the piece-count slider,
+ * mirroring updateRadialCellEstimate's live-recompute pattern. */
+function updateStainedglassPieceEstimate() {
+  if (!el.stainedglassPieceEstimate || !el.stainedglassPieceCount || !el.cellSize) return;
+  const targetCount = parseInt(el.stainedglassPieceCount.value, 10);
+  const minDist = parseInt(el.cellSize.value, 10);
+  const aspect = state.sourceCanvas ? state.sourceCanvas.width / state.sourceCanvas.height : 1.0;
+  const [canvasW, canvasH] = stainedglassCanvasSize(Math.round(aspect * 1000), 1000, targetCount, minDist);
+  const est = estimateStainedglassPieceCount(canvasW, canvasH, minDist);
+  let text = `≈ ${est.toLocaleString()} pieces at this spacing (${canvasW}×${canvasH}px canvas)`;
+  if (targetCount > STAINEDGLASS_MAX_CELLS) {
+    text += ` — over the ${STAINEDGLASS_MAX_CELLS.toLocaleString()} limit, reduce piece count`;
+  }
+  el.stainedglassPieceEstimate.textContent = text;
+}
+
+// ---------------------------------------------------------------------------
+// Lithophane mode -- lock-aspect handling and the live Detail-slider
+// estimate, mirroring mosaic_gui.py's _lithophane_float/_on_lithophane_
+// width_change/_update_lithophane_estimate.
+// ---------------------------------------------------------------------------
+
+/** Parses a lithophane numeric field, falling back to `defaultVal` for a
+ * blank, unparsable, or non-positive value -- mirrors mosaic_gui.py's
+ * MosaicApp._lithophane_float exactly. */
+function getLithophaneFloat(inputEl, defaultVal) {
+  const value = parseFloat(inputEl.value);
+  return Number.isFinite(value) && value > 0 ? value : defaultVal;
+}
+
+/** When Lock Aspect is on and an image is loaded, recompute the Height
+ * field from the Width field using the source image's aspect ratio, so the
+ * print stays undistorted -- mirrors _on_lithophane_width_change. */
+function onLithophaneWidthChange() {
+  if (el.lithophaneLockAspect.checked && state.sourceCanvas) {
+    const widthMm = getLithophaneFloat(el.lithophaneWidth, 100);
+    const aspect = state.sourceCanvas.width ? state.sourceCanvas.height / state.sourceCanvas.width : 1.0;
+    const heightMm = Math.max(1, Math.round(widthMm * aspect * 10) / 10);
+    el.lithophaneHeight.value = heightMm;
+  }
+  updateLithophaneEstimate();
+}
+
+/** Live "-> W x H height samples, ~N triangles" hint below the Detail
+ * slider, mirroring updateRadialCellEstimate/updateStainedglassPieceEstimate's
+ * live-recompute pattern -- mirrors _update_lithophane_estimate. Also
+ * refreshes the shared physical-size line, since its rendered-sample-count
+ * suffix depends on nothing here but its "Print size" prefix does. */
+function updateLithophaneEstimate() {
+  if (!el.lithophaneEstimate || !el.lithophaneWidth || !el.lithophaneHeight || !el.lithophaneDetail) return;
+  const widthMm = getLithophaneFloat(el.lithophaneWidth, 100);
+  const heightMm = getLithophaneFloat(el.lithophaneHeight, 75);
+  const samplesAcross = parseInt(el.lithophaneDetail.value, 10);
+  const [samplesW, samplesH] = lithophaneSampleGridSize(widthMm, heightMm, samplesAcross);
+  const triCount = estimateLithophaneTriangleCount(samplesW, samplesH);
+  const approxBytes = 84 + triCount * 50; // 80-byte header + uint32 count + 50 bytes/triangle
+  const sizeText = approxBytes >= 1024 * 1024
+    ? `${(approxBytes / (1024 * 1024)).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(approxBytes / 1024))} KB`;
+  let text = `→ ${samplesW}×${samplesH} height samples, ~${triCount.toLocaleString()} triangles (~${sizeText} STL)`;
+  if (triCount > LITHOPHANE_MAX_TRIANGLES) {
+    text += ` — over the ${LITHOPHANE_MAX_TRIANGLES.toLocaleString()} triangle limit, reduce detail or print size`;
+  }
+  el.lithophaneEstimate.textContent = text;
+  updatePhysicalSizeEstimate();
+}
+
+el.lithophaneWidth.addEventListener("input", onLithophaneWidthChange);
+el.lithophaneHeight.addEventListener("input", updateLithophaneEstimate);
+el.lithophaneLockAspect.addEventListener("change", () => {
+  if (el.lithophaneLockAspect.checked && state.sourceCanvas) onLithophaneWidthChange();
+});
+el.lithophaneDetail.addEventListener("input", () => {
+  el.lithophaneDetailVal.textContent = el.lithophaneDetail.value;
+  updateLithophaneEstimate();
+});
+el.lithophaneMinThickness.addEventListener("input", updatePhysicalSizeEstimate);
+el.lithophaneMaxThickness.addEventListener("input", updatePhysicalSizeEstimate);
+
+// ---------------------------------------------------------------------------
+// String Art mode -- frame-shape toggle and the live pin/line-count
+// estimate, mirroring mosaic_gui.py's _on_stringart_shape_change/
+// _update_stringart_estimate.
+// ---------------------------------------------------------------------------
+
+el.stringartShapeSeg.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-shape]");
+  if (!btn) return;
+  [...el.stringartShapeSeg.children].forEach(b => b.classList.toggle("active", b === btn));
+  updatePhysicalSizeEstimate();
+});
+
+/** Live "N pins, up to M thread lines" hint below the line-count slider,
+ * mirroring updateLithophaneEstimate's live-recompute pattern -- mirrors
+ * _update_stringart_estimate. */
+function updateStringartEstimate() {
+  if (!el.stringartEstimate || !el.stringartPins || !el.stringartLines) return;
+  const numPins = parseInt(el.stringartPins.value, 10);
+  const numLines = parseInt(el.stringartLines.value, 10);
+  let text = `${numPins} pins, up to ${numLines.toLocaleString()} thread lines`;
+  if (numPins >= 250 && numLines >= 2000) {
+    text += " — higher settings take longer to generate (several seconds)";
+  }
+  el.stringartEstimate.textContent = text;
+  updatePhysicalSizeEstimate();
+}
+
+el.stringartPins.addEventListener("input", () => {
+  el.stringartPinsVal.textContent = el.stringartPins.value;
+  updateStringartEstimate();
+});
+el.stringartLines.addEventListener("input", () => {
+  el.stringartLinesVal.textContent = el.stringartLines.value;
+  updateStringartEstimate();
+});
+el.stringartFrameSize.addEventListener("input", updatePhysicalSizeEstimate);
+el.stringartFrameSizeUnit.addEventListener("change", updatePhysicalSizeEstimate);
+
+el.stringartThreadColorBtn.addEventListener("click", () => el.stringartThreadColorPicker.click());
+el.stringartThreadColorPicker.addEventListener("input", () => {
+  state.stringartThreadColor = hexToRgb(el.stringartThreadColorPicker.value);
+  setSwatchButton(el.stringartThreadColorBtn, state.stringartThreadColor);
+  // Thread/background color only affect *rendering* (renderStringartPreview
+  // re-colors the stored darkness canvas), not the thread sequence itself,
+  // so this is a cheap re-render, unlike re-running the greedy algorithm.
+  rerenderCurrent(false);
+});
+el.stringartBgColorBtn.addEventListener("click", () => el.stringartBgColorPicker.click());
+el.stringartBgColorPicker.addEventListener("input", () => {
+  state.stringartBgColor = hexToRgb(el.stringartBgColorPicker.value);
+  setSwatchButton(el.stringartBgColorBtn, state.stringartBgColor);
+  rerenderCurrent(false);
+});
+
 el.adaptiveRectangles.addEventListener("change", () => {
   state.adaptiveRectangles = el.adaptiveRectangles.checked;
 });
@@ -1100,12 +1704,16 @@ async function generateMosaic() {
 
     el.exportPngBtn.disabled = false;
     el.exportPreviewBtn.disabled = false;
+    el.exportPosterBtn.disabled = false;
+    el.previewPosterBtn.disabled = false;
     el.exportJsonBtn.disabled = false;
     el.previewJsonBtn.disabled = false;
     el.exportCsvBtn.disabled = false;
     el.previewCsvBtn.disabled = false;
     el.exportPaintByNumberBtn.disabled = false;
     el.previewPaintByNumberBtn.disabled = false;
+    el.exportSvgBtn.disabled = false;
+    el.previewSvgBtn.disabled = false;
     el.paletteBtn.disabled = false;
     el.sampleSheetBtn.disabled = false;
     el.exportPanelsBtn.disabled = false;
@@ -1128,6 +1736,7 @@ async function generateMosaic() {
     } else {
       setStatus(`Done \u2014 ${chosenN} colors, ${gridW}\u00d7${gridH} grid.`);
     }
+    await snapshotRecentProject();
   } catch (err) {
     setStatus(`Error: ${err.message}`);
     console.error(err);
@@ -1140,12 +1749,16 @@ async function generateMosaic() {
 function disableGenerationDependentButtons() {
   el.exportPngBtn.disabled = true;
   el.exportPreviewBtn.disabled = true;
+  el.exportPosterBtn.disabled = true;
+  el.previewPosterBtn.disabled = true;
   el.exportJsonBtn.disabled = true;
   el.previewJsonBtn.disabled = true;
   el.exportCsvBtn.disabled = true;
   el.previewCsvBtn.disabled = true;
   el.exportPaintByNumberBtn.disabled = true;
   el.previewPaintByNumberBtn.disabled = true;
+  el.exportSvgBtn.disabled = true;
+  el.previewSvgBtn.disabled = true;
   el.paletteBtn.disabled = true;
   el.sampleSheetBtn.disabled = true;
   el.exportPanelsBtn.disabled = true;
@@ -1174,6 +1787,21 @@ function disableGenerationDependentButtons() {
   el.previewFoundObjectCsvBtn.disabled = true;
   el.exportFoundObjectPdfBtn.disabled = true;
   el.previewFoundObjectPdfBtn.disabled = true;
+  el.exportRadialCellsBtn.disabled = true;
+  el.previewRadialCellsBtn.disabled = true;
+  el.exportRadialShoppingBtn.disabled = true;
+  el.previewRadialShoppingBtn.disabled = true;
+  el.exportStainedglassCellsBtn.disabled = true;
+  el.previewStainedglassCellsBtn.disabled = true;
+  el.exportStainedglassShoppingBtn.disabled = true;
+  el.previewStainedglassShoppingBtn.disabled = true;
+  el.exportLithophaneStlBtn.disabled = true;
+  el.exportStringartGuideBtn.disabled = true;
+  el.previewStringartGuideBtn.disabled = true;
+  el.exportStringartSequenceBtn.disabled = true;
+  el.previewStringartSequenceBtn.disabled = true;
+  el.exportStringartShoppingBtn.disabled = true;
+  el.previewStringartShoppingBtn.disabled = true;
 }
 
 function clearBrickLayout() {
@@ -1222,6 +1850,8 @@ async function generateAdaptiveMosaic() {
 
     el.exportPngBtn.disabled = false;
     el.exportPreviewBtn.disabled = false;
+    el.exportPosterBtn.disabled = false;
+    el.previewPosterBtn.disabled = false;
     el.exportAdaptiveTilesBtn.disabled = false;
     el.previewAdaptiveTilesBtn.disabled = false;
     el.exportAdaptiveShoppingBtn.disabled = false;
@@ -1230,6 +1860,7 @@ async function generateAdaptiveMosaic() {
 
     setViewMode("output");
     setStatus(`Done — ${leaves.length} tiles, ${gridW}×${gridH} finest grid.`);
+    await snapshotRecentProject();
   } catch (err) {
     setStatus(`Error: ${err.message}`);
     console.error(err);
@@ -1259,14 +1890,480 @@ el.exportAdaptiveShoppingBtn.addEventListener("click", exportAdaptiveShoppingLis
 el.previewAdaptiveShoppingBtn.addEventListener("click", () => {
   if (!state.adaptiveLeaves) return;
   openTextExportPreviewDialog("Preview: Color Shopping List (CSV)",
-    buildAdaptiveShoppingListCsv(state.adaptiveLeaves), exportAdaptiveShoppingList);
+    buildAdaptiveShoppingListCsv(state.adaptiveLeaves, getPrice(el.adaptivePrice)), exportAdaptiveShoppingList);
 });
 
 function exportAdaptiveShoppingList() {
   if (!state.adaptiveLeaves) return;
-  const csv = buildAdaptiveShoppingListCsv(state.adaptiveLeaves);
+  const csv = buildAdaptiveShoppingListCsv(state.adaptiveLeaves, getPrice(el.adaptivePrice));
   downloadText(csv, "adaptive_shopping_list.csv", "text/csv");
   setStatus("Saved adaptive_shopping_list.csv");
+}
+
+// ---------------------------------------------------------------------------
+// Generate -- Radial (concentric rings of pie-slice cells)
+// ---------------------------------------------------------------------------
+
+el.radialGenerateBtn.addEventListener("click", generateRadialMosaic);
+
+async function generateRadialMosaic() {
+  if (!state.sourceCanvas) { setStatus("Load an image first."); return; }
+
+  const rings = parseInt(el.radialRings.value, 10);
+  const baseSegments = parseInt(el.radialBaseSegments.value, 10);
+  const numColors = parseInt(el.radialNumColors.value, 10) || null;
+  const cellSize = parseInt(el.cellSize.value, 10);
+  const bgColor = state.bgColor;
+
+  const cellCount = radialCellCount(rings, baseSegments);
+  if (cellCount > RADIAL_MAX_CELLS) {
+    setStatus(`That's ${cellCount.toLocaleString()} cells -- reduce rings or base segments ` +
+      `to bring it under ${RADIAL_MAX_CELLS.toLocaleString()}.`);
+    return;
+  }
+
+  el.radialGenerateBtn.disabled = true;
+  el.radialGenerateBtn.textContent = "Generating...";
+  setStatus("Sampling rings, this can take a few seconds for larger grids...");
+
+  try {
+    const sampled = sampleRadialColors(state.sourceCanvas, rings, baseSegments);
+    const result = await callWorker("quantize-auto", { points: sampled, nColors: numColors });
+    const palette = result.palette;
+    const quantized = Array.from(result.labels).map(l => palette[l]);
+    const chosenN = result.chosenK;
+
+    const outputCanvas = renderRadialMosaic(quantized, rings, baseSegments, cellSize, bgColor, makeCanvas);
+
+    state.radialQuantized = quantized;
+    state.palette = palette;
+    state.colorNames = palette.map(() => "");
+    state.renderedMode = "radial";
+    state.renderedCellSize = cellSize;
+    state.renderedRadialRings = rings;
+    state.renderedRadialBaseSegments = baseSegments;
+    // No natural width x height rectangle for a ring/segment layout -- a
+    // square canvas 2*rings cells across (see renderRadialMosaic) stands
+    // in for gridW/gridH everywhere that expects one (Poster export's DPI
+    // derivation via posterGridCounts, in particular), so those "just
+    // work" for this mode too with no code of their own.
+    state.renderedGridW = 2 * rings;
+    state.renderedGridH = 2 * rings;
+    state.outputCanvas = outputCanvas;
+    resetSampleDisplay();
+
+    el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
+    el.exportPosterBtn.disabled = false;
+    el.previewPosterBtn.disabled = false;
+    el.exportRadialCellsBtn.disabled = false;
+    el.previewRadialCellsBtn.disabled = false;
+    el.exportRadialShoppingBtn.disabled = false;
+    el.previewRadialShoppingBtn.disabled = false;
+    clearBrickLayout();
+
+    setViewMode("output");
+    setStatus(`Done — ${chosenN} colors, ${cellCount} cells across ${rings} rings.`);
+    await snapshotRecentProject();
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    el.radialGenerateBtn.disabled = false;
+    el.radialGenerateBtn.textContent = "Generate Mosaic";
+  }
+}
+
+el.exportRadialCellsBtn.addEventListener("click", exportRadialCells);
+el.previewRadialCellsBtn.addEventListener("click", () => {
+  if (!state.radialQuantized) return;
+  const json = buildRadialCellsJson(state.radialQuantized, state.renderedRadialRings,
+    state.renderedRadialBaseSegments, { sourceName: state.sourceFileName });
+  openTextExportPreviewDialog("Preview: Cell List (JSON)", json, exportRadialCells);
+});
+
+function exportRadialCells() {
+  if (!state.radialQuantized) return;
+  const json = buildRadialCellsJson(state.radialQuantized, state.renderedRadialRings,
+    state.renderedRadialBaseSegments, { sourceName: state.sourceFileName });
+  downloadText(json, "radial_cells.json", "application/json");
+  setStatus("Saved radial_cells.json");
+}
+
+el.exportRadialShoppingBtn.addEventListener("click", exportRadialShoppingList);
+el.previewRadialShoppingBtn.addEventListener("click", () => {
+  if (!state.radialQuantized) return;
+  openTextExportPreviewDialog("Preview: Color Shopping List (CSV)",
+    buildPaletteCsv(state.radialQuantized, state.palette, state.colorNames, getPrice(el.radialPrice)),
+    exportRadialShoppingList);
+});
+
+function exportRadialShoppingList() {
+  if (!state.radialQuantized) return;
+  const csv = buildPaletteCsv(state.radialQuantized, state.palette, state.colorNames, getPrice(el.radialPrice));
+  downloadText(csv, "radial_shopping_list.csv", "text/csv");
+  setStatus("Saved radial_shopping_list.csv");
+}
+
+el.stainedglassGenerateBtn.addEventListener("click", generateStainedglassMosaic);
+
+async function generateStainedglassMosaic() {
+  if (!state.sourceCanvas) { setStatus("Load an image first."); return; }
+
+  const targetCount = parseInt(el.stainedglassPieceCount.value, 10);
+  const minDist = parseInt(el.cellSize.value, 10);
+  const numColors = parseInt(el.stainedglassNumColors.value, 10) || null;
+  const leadWidth = parseInt(el.stainedglassLeadWidth.value, 10);
+  const leadColor = state.stainedglassLeadColor;
+  const seed = getStainedglassSeed();
+
+  if (targetCount > STAINEDGLASS_MAX_CELLS) {
+    setStatus(`That's a target of ${targetCount.toLocaleString()} pieces -- reduce the piece count ` +
+      `to bring it under ${STAINEDGLASS_MAX_CELLS.toLocaleString()}.`);
+    return;
+  }
+
+  el.stainedglassGenerateBtn.disabled = true;
+  el.stainedglassGenerateBtn.textContent = "Generating...";
+  setStatus("Scattering pieces, this can take a few seconds for larger counts...");
+
+  try {
+    const [canvasW, canvasH] = stainedglassCanvasSize(
+      state.sourceCanvas.width, state.sourceCanvas.height, targetCount, minDist);
+    const points = poissonDiscPoints(canvasW, canvasH, minDist, seed);
+    if (points.length > STAINEDGLASS_MAX_CELLS) {
+      setStatus(`That layout came out to ${points.length.toLocaleString()} pieces -- reduce the piece count ` +
+        `to bring it under ${STAINEDGLASS_MAX_CELLS.toLocaleString()}.`);
+      return;
+    }
+    const sampled = sampleStainedglassColors(state.sourceCanvas, points, canvasW, canvasH, minDist);
+    const result = await callWorker("quantize-auto", { points: sampled, nColors: numColors });
+    const palette = result.palette;
+    const quantized = Array.from(result.labels).map(l => palette[l]);
+    const chosenN = result.chosenK;
+
+    const outputCanvas = renderStainedglassMosaic(
+      quantized, points, canvasW, canvasH, minDist, leadWidth, leadColor, makeCanvas);
+
+    state.stainedglassPoints = points;
+    state.stainedglassQuantized = quantized;
+    state.stainedglassCanvasW = canvasW;
+    state.stainedglassCanvasH = canvasH;
+    state.stainedglassActualCellCount = points.length;
+    state.renderedStainedglassMinDist = minDist;
+    state.palette = palette;
+    state.colorNames = palette.map(() => "");
+    state.renderedMode = "stainedglass";
+    state.renderedCellSize = minDist;
+    // No natural width x height rectangle here either (irregular Voronoi
+    // cells, not a grid) -- a nominal "pieces across/down" at the actual
+    // average piece spacing stands in for gridW/gridH, same trick Radial
+    // uses, so Poster export's DPI derivation (via posterGridCounts) and
+    // the physical-size estimate both "just work" with no code of their
+    // own.
+    state.renderedGridW = Math.max(1, Math.round(canvasW / minDist));
+    state.renderedGridH = Math.max(1, Math.round(canvasH / minDist));
+    state.outputCanvas = outputCanvas;
+    resetSampleDisplay();
+
+    el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
+    el.exportPosterBtn.disabled = false;
+    el.previewPosterBtn.disabled = false;
+    el.exportStainedglassCellsBtn.disabled = false;
+    el.previewStainedglassCellsBtn.disabled = false;
+    el.exportStainedglassShoppingBtn.disabled = false;
+    el.previewStainedglassShoppingBtn.disabled = false;
+    clearBrickLayout();
+
+    setViewMode("output");
+    updatePhysicalSizeEstimate();
+    setStatus(`Done — ${chosenN} colors, ${points.length} pieces (${canvasW}×${canvasH}px canvas).`);
+    await snapshotRecentProject();
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    el.stainedglassGenerateBtn.disabled = false;
+    el.stainedglassGenerateBtn.textContent = "Generate Mosaic";
+  }
+}
+
+el.exportStainedglassCellsBtn.addEventListener("click", exportStainedglassCells);
+el.previewStainedglassCellsBtn.addEventListener("click", () => {
+  if (!state.stainedglassQuantized) return;
+  const json = buildStainedglassCellsJson(state.stainedglassQuantized, state.stainedglassPoints,
+    state.stainedglassCanvasW, state.stainedglassCanvasH, { sourceName: state.sourceFileName });
+  openTextExportPreviewDialog("Preview: Cell List (JSON)", json, exportStainedglassCells);
+});
+
+function exportStainedglassCells() {
+  if (!state.stainedglassQuantized) return;
+  const json = buildStainedglassCellsJson(state.stainedglassQuantized, state.stainedglassPoints,
+    state.stainedglassCanvasW, state.stainedglassCanvasH, { sourceName: state.sourceFileName });
+  downloadText(json, "stainedglass_cells.json", "application/json");
+  setStatus("Saved stainedglass_cells.json");
+}
+
+// ---------------------------------------------------------------------------
+// Generate -- Lithophane (classic single-material, exported as a real STL)
+// ---------------------------------------------------------------------------
+// Deliberately no cheap re-render path (unlike Stained Glass's lead-width/
+// color or Dice/Rubik's die-color): sampling and geometry are tightly
+// coupled here, with no separable "just re-render with new colors" step,
+// so every settings change needs a full Generate click -- mirrors
+// mosaic_gui.py's equivalent scope decision. Poster export is deliberately
+// not enabled either (Poster's DPI scale comes from the shared Piece Size
+// field, which has no meaning for Lithophane's own width/height controls),
+// and there's no preview-dialog button since a binary STL doesn't fit the
+// text-preview pattern -- the grayscale PNG preview (shared exportPreviewBtn)
+// serves as the visual check before printing.
+
+el.lithophaneGenerateBtn.addEventListener("click", generateLithophaneMosaic);
+
+async function generateLithophaneMosaic() {
+  if (!state.sourceCanvas) { setStatus("Load an image first."); return; }
+
+  const widthMm = getLithophaneFloat(el.lithophaneWidth, 100);
+  const heightMm = getLithophaneFloat(el.lithophaneHeight, 75);
+  const samplesAcross = parseInt(el.lithophaneDetail.value, 10);
+  const minThickness = getLithophaneFloat(el.lithophaneMinThickness, 0.8);
+  const maxThickness = getLithophaneFloat(el.lithophaneMaxThickness, 3.2);
+  const invert = el.lithophaneInvert.checked;
+
+  if (maxThickness <= minThickness) {
+    setStatus("Max thickness must be greater than min thickness.");
+    return;
+  }
+
+  const [samplesW, samplesH] = lithophaneSampleGridSize(widthMm, heightMm, samplesAcross);
+  const triCount = estimateLithophaneTriangleCount(samplesW, samplesH);
+  if (triCount > LITHOPHANE_MAX_TRIANGLES) {
+    setStatus(`That's about ${triCount.toLocaleString()} triangles -- reduce the detail level ` +
+      `to bring it under ${LITHOPHANE_MAX_TRIANGLES.toLocaleString()}.`);
+    return;
+  }
+
+  el.lithophaneGenerateBtn.disabled = true;
+  el.lithophaneGenerateBtn.textContent = "Generating...";
+  setStatus("Sampling height map, this can take a moment for higher detail...");
+
+  try {
+    const heightmap = sampleLithophaneHeightmap(
+      state.sourceCanvas, samplesW, samplesH, minThickness, maxThickness, invert);
+    const outputCanvas = renderLithophanePreview(
+      heightmap, samplesW, samplesH, minThickness, maxThickness, makeCanvas);
+
+    state.lithophaneHeightmap = heightmap;
+    state.lithophaneSamplesW = samplesW;
+    state.lithophaneSamplesH = samplesH;
+    state.lithophaneRenderedWidthMm = widthMm;
+    state.lithophaneRenderedHeightMm = heightMm;
+    state.palette = null;
+    state.colorNames = [];
+    state.renderedMode = "lithophane";
+    state.outputCanvas = outputCanvas;
+    resetSampleDisplay();
+
+    el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
+    el.exportLithophaneStlBtn.disabled = false;
+    clearBrickLayout();
+
+    setViewMode("output");
+    updatePhysicalSizeEstimate();
+    setStatus(`Done — ${samplesW}×${samplesH} height samples (${widthMm}×${heightMm}mm print).`);
+    await snapshotRecentProject();
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    el.lithophaneGenerateBtn.disabled = false;
+    el.lithophaneGenerateBtn.textContent = "Generate Mosaic";
+  }
+}
+
+el.exportLithophaneStlBtn.addEventListener("click", exportLithophaneStl);
+
+function exportLithophaneStl() {
+  if (!state.lithophaneHeightmap) return;
+  const stlBuffer = buildLithophaneStl(state.lithophaneHeightmap, state.lithophaneSamplesW, state.lithophaneSamplesH,
+    state.lithophaneRenderedWidthMm, state.lithophaneRenderedHeightMm);
+  downloadBlob(new Blob([stlBuffer], { type: "model/stl" }), "lithophane.stl");
+  setStatus("Saved lithophane.stl");
+}
+
+// ---------------------------------------------------------------------------
+// Generate -- String Art (pins around a circular/rectangular frame,
+// connected by one continuous thread; the greedy sequencing loop runs in
+// the worker to keep the tab responsive at higher pin/line counts)
+// ---------------------------------------------------------------------------
+
+el.stringartGenerateBtn.addEventListener("click", generateStringartMosaic);
+
+async function generateStringartMosaic() {
+  if (!state.sourceCanvas) { setStatus("Load an image first."); return; }
+
+  const shape = [...el.stringartShapeSeg.children].find(b => b.classList.contains("active")).dataset.shape;
+  const numPins = parseInt(el.stringartPins.value, 10);
+  const numLines = parseInt(el.stringartLines.value, 10);
+  const frameSize = parseFloat(el.stringartFrameSize.value) || 0;
+  const frameSizeUnit = el.stringartFrameSizeUnit.value;
+  const threadColor = state.stringartThreadColor;
+  const bgColor = state.stringartBgColor;
+
+  el.stringartGenerateBtn.disabled = true;
+  el.stringartGenerateBtn.textContent = "Generating...";
+  setStatus("Stringing the thread path, this can take a few seconds for higher pin/line counts...");
+
+  try {
+    const target = sampleStringartTarget(state.sourceCanvas);
+    const { sequence, canvas } = await callWorker("stringart", { target, shape, numPins, numLines });
+    const positions = stringartPinPositions(shape, numPins);
+    const outputCanvas = renderStringartPreview(
+      canvas, shape, STRINGART_WORKING_SIZE, threadColor, bgColor, makeCanvas);
+    const threadLength = estimateStringartThreadLength(sequence, positions, frameSize);
+
+    state.stringartSequence = sequence;
+    state.stringartCanvas = canvas;
+    state.stringartPositions = positions;
+    state.stringartShape = shape;
+    state.stringartNumPins = numPins;
+    state.stringartFrameSize = frameSize;
+    state.stringartFrameSizeUnit = frameSizeUnit;
+    state.stringartThreadLength = threadLength;
+    state.palette = null;
+    state.colorNames = [];
+    state.renderedMode = "stringart";
+    state.outputCanvas = outputCanvas;
+    resetSampleDisplay();
+
+    el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
+    el.exportStringartGuideBtn.disabled = false;
+    el.previewStringartGuideBtn.disabled = false;
+    el.exportStringartSequenceBtn.disabled = false;
+    el.previewStringartSequenceBtn.disabled = false;
+    el.exportStringartShoppingBtn.disabled = false;
+    el.previewStringartShoppingBtn.disabled = false;
+    // Poster export is left alone (not enabled) -- its real-world scale is
+    // derived from the shared Piece Size field, which has no meaning for
+    // String Art's own frame-size field, same reasoning as Lithophane.
+    clearBrickLayout();
+
+    setViewMode("output");
+    updatePhysicalSizeEstimate();
+    setStatus(`Done — ${sequence.length - 1} thread lines across ${numPins} pins.`);
+    await snapshotRecentProject();
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    el.stringartGenerateBtn.disabled = false;
+    el.stringartGenerateBtn.textContent = "Generate Mosaic";
+  }
+}
+
+/** Builds the Build Guide's pages (pin map + as many wrapped thread-
+ * sequence pages as needed) -- shared by the preview dialog and the real
+ * Save so both render byte-for-byte the same pages, mirroring
+ * mosaic_core.py's export_stringart_build_guide_pdf exactly. */
+function buildStringartGuidePages() {
+  const entriesPerPage = 400;
+  const pages = [renderStringartPinMap(state.stringartPositions, state.stringartShape, makeCanvas,
+    { threadColor: state.stringartThreadColor })];
+  const total = state.stringartSequence.length;
+  const nPages = Math.ceil(total / entriesPerPage);
+  for (let p = 0; p < nPages; p++) {
+    const start = p * entriesPerPage;
+    const end = Math.min(total, start + entriesPerPage);
+    const label = `Thread sequence, steps ${start}-${end - 1} of ${total - 1} (page ${p + 1} of ${nPages})`;
+    pages.push(renderStringartSequencePage(state.stringartSequence, start, end, label, makeCanvas));
+  }
+  return pages;
+}
+
+el.exportStringartGuideBtn.addEventListener("click", exportStringartGuide);
+el.previewStringartGuideBtn.addEventListener("click", () => {
+  if (!state.stringartSequence) return;
+  try {
+    openPdfExportPreviewDialog("Preview: String Art Build Guide (PDF)", buildStringartGuidePages(),
+      exportStringartGuide);
+  } catch (err) {
+    setStatus(`Error building string art build guide preview: ${err.message}`);
+    console.error(err);
+  }
+});
+
+function exportStringartGuide() {
+  if (!state.stringartSequence) return;
+  try {
+    const pages = buildStringartGuidePages();
+    const doc = new jspdf.jsPDF({
+      unit: "px",
+      format: [pages[0].width, pages[0].height],
+      orientation: pages[0].width >= pages[0].height ? "landscape" : "portrait",
+    });
+    doc.addImage(pages[0].toDataURL("image/png"), "PNG", 0, 0, pages[0].width, pages[0].height);
+    for (let i = 1; i < pages.length; i++) {
+      doc.addPage([pages[i].width, pages[i].height], pages[i].width >= pages[i].height ? "landscape" : "portrait");
+      doc.addImage(pages[i].toDataURL("image/png"), "PNG", 0, 0, pages[i].width, pages[i].height);
+    }
+    doc.save("stringart_build_guide.pdf");
+    setStatus(`Saved stringart_build_guide.pdf (${pages.length} pages)`);
+  } catch (err) {
+    setStatus(`Error building string art build guide PDF: ${err.message}`);
+    console.error(err);
+  }
+}
+
+el.exportStringartSequenceBtn.addEventListener("click", exportStringartSequence);
+el.previewStringartSequenceBtn.addEventListener("click", () => {
+  if (!state.stringartSequence) return;
+  const json = buildStringartSequenceJson(state.stringartSequence, state.stringartPositions, state.stringartShape,
+    state.stringartNumPins, state.stringartFrameSize, state.stringartFrameSizeUnit,
+    state.stringartThreadLength, { sourceName: state.sourceFileName });
+  openTextExportPreviewDialog("Preview: Pin Sequence (JSON)", json, exportStringartSequence);
+});
+
+function exportStringartSequence() {
+  if (!state.stringartSequence) return;
+  const json = buildStringartSequenceJson(state.stringartSequence, state.stringartPositions, state.stringartShape,
+    state.stringartNumPins, state.stringartFrameSize, state.stringartFrameSizeUnit,
+    state.stringartThreadLength, { sourceName: state.sourceFileName });
+  downloadText(json, "stringart_sequence.json", "application/json");
+  setStatus("Saved stringart_sequence.json");
+}
+
+el.exportStringartShoppingBtn.addEventListener("click", exportStringartShoppingList);
+el.previewStringartShoppingBtn.addEventListener("click", () => {
+  if (!state.stringartSequence) return;
+  const csv = buildStringartShoppingListCsv(state.stringartNumPins, state.stringartThreadLength,
+    state.stringartFrameSizeUnit, getPrice(el.stringartPrice));
+  openTextExportPreviewDialog("Preview: String Art Shopping List (CSV)", csv, exportStringartShoppingList);
+});
+
+function exportStringartShoppingList() {
+  if (!state.stringartSequence) return;
+  const csv = buildStringartShoppingListCsv(state.stringartNumPins, state.stringartThreadLength,
+    state.stringartFrameSizeUnit, getPrice(el.stringartPrice));
+  downloadText(csv, "stringart_shopping_list.csv", "text/csv");
+  setStatus("Saved stringart_shopping_list.csv");
+}
+
+el.exportStainedglassShoppingBtn.addEventListener("click", exportStainedglassShoppingList);
+el.previewStainedglassShoppingBtn.addEventListener("click", () => {
+  if (!state.stainedglassQuantized) return;
+  openTextExportPreviewDialog("Preview: Color Shopping List (CSV)",
+    buildPaletteCsv(state.stainedglassQuantized, state.palette, state.colorNames, getPrice(el.stainedglassPrice)),
+    exportStainedglassShoppingList);
+});
+
+function exportStainedglassShoppingList() {
+  if (!state.stainedglassQuantized) return;
+  const csv = buildPaletteCsv(state.stainedglassQuantized, state.palette, state.colorNames, getPrice(el.stainedglassPrice));
+  downloadText(csv, "stainedglass_shopping_list.csv", "text/csv");
+  setStatus("Saved stainedglass_shopping_list.csv");
 }
 
 // ---------------------------------------------------------------------------
@@ -1306,6 +2403,8 @@ async function generateDiceMosaic() {
 
     el.exportPngBtn.disabled = false;
     el.exportPreviewBtn.disabled = false;
+    el.exportPosterBtn.disabled = false;
+    el.previewPosterBtn.disabled = false;
     el.exportDiceGuideBtn.disabled = false;
     el.previewDiceGuideBtn.disabled = false;
     el.exportDiceShoppingBtn.disabled = false;
@@ -1314,6 +2413,7 @@ async function generateDiceMosaic() {
 
     setViewMode("output");
     setStatus(`Done — ${gridW * gridH} dice, ${gridW}×${gridH} grid.`);
+    await snapshotRecentProject();
   } catch (err) {
     setStatus(`Error: ${err.message}`);
     console.error(err);
@@ -1371,12 +2471,12 @@ el.exportDiceShoppingBtn.addEventListener("click", exportDiceShoppingList);
 el.previewDiceShoppingBtn.addEventListener("click", () => {
   if (!state.dicePipGrid) return;
   openTextExportPreviewDialog("Preview: Dice Shopping List (CSV)",
-    buildDiceShoppingListCsv(state.dicePipGrid), exportDiceShoppingList);
+    buildDiceShoppingListCsv(state.dicePipGrid, getPrice(el.dicePrice)), exportDiceShoppingList);
 });
 
 function exportDiceShoppingList() {
   if (!state.dicePipGrid) return;
-  downloadText(buildDiceShoppingListCsv(state.dicePipGrid), "dice_shopping_list.csv", "text/csv");
+  downloadText(buildDiceShoppingListCsv(state.dicePipGrid, getPrice(el.dicePrice)), "dice_shopping_list.csv", "text/csv");
   setStatus("Saved dice_shopping_list.csv");
 }
 
@@ -1418,6 +2518,8 @@ async function generateRubiksMosaic() {
 
     el.exportPngBtn.disabled = false;
     el.exportPreviewBtn.disabled = false;
+    el.exportPosterBtn.disabled = false;
+    el.previewPosterBtn.disabled = false;
     el.exportRubiksGuideBtn.disabled = false;
     el.previewRubiksGuideBtn.disabled = false;
     el.exportRubiksShoppingBtn.disabled = false;
@@ -1427,6 +2529,7 @@ async function generateRubiksMosaic() {
 
     setViewMode("output");
     setStatus(`Done — ${rubiksCubeCount(gridW, gridH)} cubes, ${cubesWide}×${cubesTall} cubes (${gridW}×${gridH} grid).`);
+    await snapshotRecentProject();
   } catch (err) {
     setStatus(`Error: ${err.message}`);
     console.error(err);
@@ -1476,13 +2579,15 @@ function exportRubiksBuildGuide() {
 el.exportRubiksShoppingBtn.addEventListener("click", exportRubiksShoppingList);
 el.previewRubiksShoppingBtn.addEventListener("click", () => {
   if (!state.rubiksGrid) return;
-  const csv = buildRubiksShoppingListCsv(state.rubiksGrid, RUBIKS_PALETTE, state.renderedGridW, state.renderedGridH);
+  const csv = buildRubiksShoppingListCsv(state.rubiksGrid, RUBIKS_PALETTE, state.renderedGridW, state.renderedGridH,
+    getPrice(el.rubiksPrice));
   openTextExportPreviewDialog("Preview: Cube Shopping List (CSV)", csv, exportRubiksShoppingList);
 });
 
 function exportRubiksShoppingList() {
   if (!state.rubiksGrid) return;
-  const csv = buildRubiksShoppingListCsv(state.rubiksGrid, RUBIKS_PALETTE, state.renderedGridW, state.renderedGridH);
+  const csv = buildRubiksShoppingListCsv(state.rubiksGrid, RUBIKS_PALETTE, state.renderedGridW, state.renderedGridH,
+    getPrice(el.rubiksPrice));
   downloadText(csv, "rubiks_cube_shopping_list.csv", "text/csv");
   setStatus("Saved rubiks_cube_shopping_list.csv");
 }
@@ -1597,10 +2702,13 @@ async function generateMetaMosaic() {
 
     el.exportPngBtn.disabled = false;
     el.exportPreviewBtn.disabled = false;
+    el.exportPosterBtn.disabled = false;
+    el.previewPosterBtn.disabled = false;
     clearBrickLayout();
 
     setViewMode("output");
     setStatus(`Done — ${gridW}×${gridH} grid, ${cellSize}px cells.`);
+    await snapshotRecentProject();
   } catch (err) {
     setStatus(`Error: ${err.message}`);
     console.error(err);
@@ -1653,6 +2761,8 @@ async function generateCrossStitchMosaic() {
 
     el.exportPngBtn.disabled = false;
     el.exportPreviewBtn.disabled = false;
+    el.exportPosterBtn.disabled = false;
+    el.previewPosterBtn.disabled = false;
     el.exportCrossStitchPatternBtn.disabled = false;
     el.previewCrossStitchPatternBtn.disabled = false;
     el.exportCrossStitchShoppingBtn.disabled = false;
@@ -1662,6 +2772,7 @@ async function generateCrossStitchMosaic() {
     setViewMode("output");
     const used = dmcColorCounts(quantizedFlat).filter(c => c.count > 0).length;
     setStatus(`Done — ${used} DMC colors, ${gridW}×${gridH} grid.`);
+    await snapshotRecentProject();
   } catch (err) {
     setStatus(`Error: ${err.message}`);
     console.error(err);
@@ -1759,12 +2870,12 @@ el.exportCrossStitchShoppingBtn.addEventListener("click", exportCrossStitchShopp
 el.previewCrossStitchShoppingBtn.addEventListener("click", () => {
   if (!state.crossStitchGrid) return;
   openTextExportPreviewDialog("Preview: Floss Shopping List (CSV)",
-    buildCrossStitchShoppingListCsv(state.crossStitchGrid), exportCrossStitchShoppingList);
+    buildCrossStitchShoppingListCsv(state.crossStitchGrid, getPrice(el.crossstitchPrice)), exportCrossStitchShoppingList);
 });
 
 function exportCrossStitchShoppingList() {
   if (!state.crossStitchGrid) return;
-  downloadText(buildCrossStitchShoppingListCsv(state.crossStitchGrid),
+  downloadText(buildCrossStitchShoppingListCsv(state.crossStitchGrid, getPrice(el.crossstitchPrice)),
     "cross_stitch_shopping_list.csv", "text/csv");
   setStatus("Saved cross_stitch_shopping_list.csv");
 }
@@ -1814,6 +2925,8 @@ async function generateFoundObjectMosaic() {
 
     el.exportPngBtn.disabled = false;
     el.exportPreviewBtn.disabled = false;
+    el.exportPosterBtn.disabled = false;
+    el.previewPosterBtn.disabled = false;
     el.foundObjectLibraryBtn.disabled = false;
     el.exportFoundObjectJsonBtn.disabled = false;
     el.previewFoundObjectJsonBtn.disabled = false;
@@ -1826,6 +2939,7 @@ async function generateFoundObjectMosaic() {
 
     setViewMode("output");
     setStatus(`Done — ${palette.length} colors, ${gridW}×${gridH} grid. Assign photos to colors below.`);
+    await snapshotRecentProject();
   } catch (err) {
     setStatus(`Error: ${err.message}`);
     console.error(err);
@@ -1992,7 +3106,8 @@ el.previewFoundObjectCsvBtn.addEventListener("click", () => {
   const names = foundObjectColorNames();
   const gridCsv = buildGridCsv(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
     state.foundObjectPalette, names);
-  const colorsCsv = buildPaletteCsv(state.foundObjectQuantizedGrid, state.foundObjectPalette, names);
+  const colorsCsv = buildPaletteCsv(state.foundObjectQuantizedGrid, state.foundObjectPalette, names,
+    getPrice(el.foundobjectPrice));
   const content = `--- found_object_data.csv (per-cell grid) ---\n${gridCsv}\n`
     + `--- found_object_data_colors.csv (object totals) ---\n${colorsCsv}`;
   openTextExportPreviewDialog("Preview: Object Data (CSV)", content, exportFoundObjectCsv);
@@ -2003,8 +3118,8 @@ function exportFoundObjectCsv() {
   const names = foundObjectColorNames();
   downloadText(buildGridCsv(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
     state.foundObjectPalette, names), "found_object_data.csv", "text/csv");
-  downloadText(buildPaletteCsv(state.foundObjectQuantizedGrid, state.foundObjectPalette, names),
-    "found_object_data_colors.csv", "text/csv");
+  downloadText(buildPaletteCsv(state.foundObjectQuantizedGrid, state.foundObjectPalette, names,
+    getPrice(el.foundobjectPrice)), "found_object_data_colors.csv", "text/csv");
   setStatus("Saved found_object_data.csv and found_object_data_colors.csv");
 }
 
@@ -2316,15 +3431,22 @@ function openPaletteChooser() {
 
   const btnRow = document.createElement("div");
   btnRow.style.display = "flex";
+  btnRow.style.flexWrap = "wrap";
   btnRow.style.gap = "8px";
   btnRow.style.marginBottom = "10px";
   const legoBtn = document.createElement("button");
-  legoBtn.type = "button"; legoBtn.textContent = "LEGO Solid Colors";
+  legoBtn.type = "button"; legoBtn.textContent = "LEGO";
+  const perlerBtn = document.createElement("button");
+  perlerBtn.type = "button"; perlerBtn.textContent = "Perler";
+  const hamaBtn = document.createElement("button");
+  hamaBtn.type = "button"; hamaBtn.textContent = "Hama";
+  const artkalBtn = document.createElement("button");
+  artkalBtn.type = "button"; artkalBtn.textContent = "Artkal";
   const importBtn = document.createElement("button");
   importBtn.type = "button"; importBtn.textContent = "Import from File...";
   const importInput = document.createElement("input");
   importInput.type = "file"; importInput.accept = ".csv,.json"; importInput.hidden = true;
-  btnRow.append(legoBtn, importBtn);
+  btnRow.append(legoBtn, perlerBtn, hamaBtn, artkalBtn, importBtn);
 
   const previewList = document.createElement("div");
 
@@ -2351,6 +3473,15 @@ function openPaletteChooser() {
   legoBtn.addEventListener("click", () =>
     renderPreview(LEGO_SOLID_COLORS.map(c => ({ name: c.name, rgb: c.rgb })),
                   `LEGO Solid Colors (${LEGO_SOLID_COLORS.length} colors)`));
+  perlerBtn.addEventListener("click", () =>
+    renderPreview(PERLER_BEAD_COLORS.map(c => ({ name: c.name, rgb: c.rgb })),
+                  `Perler Beads (${PERLER_BEAD_COLORS.length} colors)`));
+  hamaBtn.addEventListener("click", () =>
+    renderPreview(HAMA_BEAD_COLORS.map(c => ({ name: c.name, rgb: c.rgb })),
+                  `Hama Beads (${HAMA_BEAD_COLORS.length} colors)`));
+  artkalBtn.addEventListener("click", () =>
+    renderPreview(ARTKAL_BEAD_COLORS.map(c => ({ name: c.name, rgb: c.rgb })),
+                  `Artkal Beads (${ARTKAL_BEAD_COLORS.length} colors)`));
   importBtn.addEventListener("click", () => importInput.click());
   importInput.addEventListener("change", async () => {
     const file = importInput.files[0];
@@ -2369,7 +3500,7 @@ function openPaletteChooser() {
 
   buttons = showDialog({
     title: "Choose Fixed Palette",
-    desc: "Constrain colors to a fixed palette. Each cell is matched to the nearest color in the list below (perceptual match, not just closest RGB). Good for real materials with a fixed color set \u2014 LEGO, Perler beads, a specific paint line.",
+    desc: "Constrain colors to a fixed palette. Each cell is matched to the nearest color in the list below (perceptual match, not just closest RGB). Good for real materials with a fixed color set \u2014 LEGO, fuse beads, a specific paint line.",
     bodyEl: body,
     actions: [
       {
@@ -2514,12 +3645,14 @@ el.exportShoppingListBtn.addEventListener("click", exportBricksShoppingList);
 el.previewShoppingListBtn.addEventListener("click", () => {
   if (!state.brickLayout) return;
   openTextExportPreviewDialog("Preview: Shopping List (CSV)",
-    buildShoppingListCsv(state.brickLayout, state.palette, state.colorNames), exportBricksShoppingList);
+    buildShoppingListCsv(state.brickLayout, state.palette, state.colorNames, getPrice(el.brickPrice)),
+    exportBricksShoppingList);
 });
 
 function exportBricksShoppingList() {
   if (!state.brickLayout) return;
-  downloadText(buildShoppingListCsv(state.brickLayout, state.palette, state.colorNames), "shopping_list.csv", "text/csv");
+  downloadText(buildShoppingListCsv(state.brickLayout, state.palette, state.colorNames, getPrice(el.brickPrice)),
+    "shopping_list.csv", "text/csv");
   setStatus("Saved shopping_list.csv");
 }
 
@@ -2635,6 +3768,78 @@ function openExportPreviewDialog() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Poster / multi-page print export -- shared by every layout mode, tiles
+// the current output across several sheets of ordinary paper at the DPI
+// implied by the Piece Size setting (see core/poster.js's renderPosterPages
+// for the full reasoning: no separate scale/DPI input, the poster is
+// always WYSIWYG with the on-screen output).
+// ---------------------------------------------------------------------------
+
+/** [gridW, gridH] in the same "piece" units updatePhysicalSizeEstimate uses
+ * for the Piece Size feature -- whole cubes for Rubik's Cube, grid cells
+ * for every other mode -- based on what was actually rendered
+ * (state.renderedMode/renderedGridW/renderedGridH), not whatever the
+ * mode/grid controls currently show (which may have changed since the
+ * last Generate). */
+function posterGridCounts() {
+  if (state.renderedMode === "rubiks") {
+    return [state.renderedGridW / 3, state.renderedGridH / 3];
+  }
+  return [state.renderedGridW, state.renderedGridH];
+}
+
+/** Shared by previewPoster/exportPoster: builds the poster's pages from
+ * the current output and settings. Returns { pages, cols, rows, dpi }, or
+ * null (with a friendly status message already set) if a poster can't be
+ * built right now -- no output yet, no piece size set, or settings that
+ * imply an unworkable page count/DPI. */
+function buildPosterPages() {
+  if (!state.outputCanvas) return null;
+  const pieceSize = parseFloat(el.pieceSize.value) || 0;
+  if (!(pieceSize > 0)) {
+    setStatus("Set a piece size above before making a poster.");
+    return null;
+  }
+  const unit = el.pieceSizeUnit.value;
+  const paperSize = el.posterPaper.value;
+  const [gridW, gridH] = posterGridCounts();
+  try {
+    return renderPosterPages(state.outputCanvas, gridW, gridH, pieceSize, unit, paperSize, makeCanvas);
+  } catch (err) {
+    setStatus(err.message);
+    return null;
+  }
+}
+
+function exportPoster() {
+  const result = buildPosterPages();
+  if (!result) return;
+  const { pages, cols, rows, dpi } = result;
+  const paperSize = el.posterPaper.value;
+  const [paperWIn, paperHIn] = POSTER_PAPER_SIZES[paperSize] || POSTER_PAPER_SIZES.Letter;
+  try {
+    const doc = new jspdf.jsPDF({ unit: "in", format: [paperWIn, paperHIn], orientation: "portrait" });
+    pages.forEach((page, i) => {
+      if (i > 0) doc.addPage([paperWIn, paperHIn], "portrait");
+      doc.addImage(page.toDataURL("image/png"), "PNG", 0, 0, paperWIn, paperHIn);
+    });
+    doc.save("mosaic_poster.pdf");
+    setStatus(`Saved mosaic_poster.pdf (${cols * rows} pages, ${cols}×${rows}, ${paperSize}, ${Math.round(dpi)} DPI)`);
+  } catch (err) {
+    setStatus(`Error building poster PDF: ${err.message}`);
+    console.error(err);
+  }
+}
+
+el.exportPosterBtn.addEventListener("click", exportPoster);
+el.previewPosterBtn.addEventListener("click", () => {
+  const result = buildPosterPages();
+  if (!result) return;
+  const { pages, cols, rows } = result;
+  openPdfExportPreviewDialog(`Preview: Poster (${cols * rows} pages, ${cols} × ${rows})`, pages, exportPoster);
+});
+
 // Generic text (CSV/JSON) export preview: shows exactly the text a Save
 // button would write, with the same Save action available right there --
 // mirrors openExportPreviewDialog's image pattern for text output.
@@ -2726,7 +3931,7 @@ el.exportCsvBtn.addEventListener("click", exportCsv);
 el.previewCsvBtn.addEventListener("click", () => {
   if (!state.quantizedGrid) return;
   const gridCsv = buildGridCsv(state.quantizedGrid, state.gridW, state.gridH, state.palette, state.colorNames);
-  const colorsCsv = buildPaletteCsv(state.quantizedGrid, state.palette, state.colorNames);
+  const colorsCsv = buildPaletteCsv(state.quantizedGrid, state.palette, state.colorNames, getPrice(el.classicPrice));
   const content = `--- mosaic.csv (per-cell grid) ---\n${gridCsv}\n`
     + `--- mosaic_colors.csv (color totals) ---\n${colorsCsv}`;
   openTextExportPreviewDialog("Preview: Grid Data (CSV)", content, exportCsv);
@@ -2736,7 +3941,7 @@ function exportCsv() {
   if (!state.quantizedGrid) return;
   downloadText(buildGridCsv(state.quantizedGrid, state.gridW, state.gridH, state.palette, state.colorNames),
     "mosaic.csv", "text/csv");
-  downloadText(buildPaletteCsv(state.quantizedGrid, state.palette, state.colorNames),
+  downloadText(buildPaletteCsv(state.quantizedGrid, state.palette, state.colorNames, getPrice(el.classicPrice)),
     "mosaic_colors.csv", "text/csv");
   setStatus("Saved mosaic.csv and mosaic_colors.csv");
 }
@@ -2780,6 +3985,417 @@ function exportPaintByNumber() {
     setStatus(`Error building paint-by-number PDF: ${err.message}`);
     console.error(err);
   }
+}
+
+// Color-separated SVG -- one <g> layer per palette color actually used
+// (see core/svgExport.js's buildColorSeparatedSvg for the full reasoning:
+// a vector export for opening in Illustrator/Inkscape/a cutter's software
+// and working with a single color's cells at a time).
+function buildSvgForCurrentGrid() {
+  return buildColorSeparatedSvg(
+    state.quantizedGrid, state.gridW, state.gridH, state.palette, state.renderedShape,
+    state.renderedCellSize,
+    {
+      names: state.colorNames, circleInterlock: state.renderedCircleInterlock,
+      diamondInterlock: state.renderedDiamondInterlock, bgColor: state.bgColor,
+    });
+}
+
+el.exportSvgBtn.addEventListener("click", exportColorSvg);
+el.previewSvgBtn.addEventListener("click", () => {
+  if (!state.quantizedGrid) return;
+  const { svg } = buildSvgForCurrentGrid();
+  openTextExportPreviewDialog("Preview: Color-Separated (SVG)", svg, exportColorSvg);
+});
+
+function exportColorSvg() {
+  if (!state.quantizedGrid) return;
+  const { svg, layerCount } = buildSvgForCurrentGrid();
+  downloadText(svg, "mosaic_colors.svg", "image/svg+xml");
+  setStatus(`Saved mosaic_colors.svg (${layerCount} color layers)`);
+}
+
+// ---------------------------------------------------------------------------
+// Recent Projects -- snapshot the loaded photo + current settings + a
+// thumbnail of the just-rendered output after every successful generate, so
+// it can be reopened later from the Recent Projects dialog. See
+// js/core/recentProjects.js for the storage format and the
+// one-entry-per-loaded-photo (not per-click) update behavior.
+// ---------------------------------------------------------------------------
+
+async function snapshotRecentProject() {
+  if (!state.sourceCanvas || !state.outputCanvas) return;
+  try {
+    const defaultName = (state.sourceFileName || "Untitled").replace(/\.[^./\\]+$/, "");
+    state.currentProjectId = await recentProjects.saveSnapshot(
+      state.currentProjectId, defaultName, state.renderedMode, state.sourceCanvas,
+      state.sourceFileName, collectSettings(), state.outputCanvas);
+  } catch (err) {
+    // Recent Projects is a convenience, never a reason to interrupt a
+    // successful generate -- just note it in the status bar.
+    setStatus(`Generated (Recent Projects snapshot failed: ${err.message})`);
+  }
+}
+
+el.recentProjectsBtn.addEventListener("click", openRecentProjects);
+
+async function openRecentProjects() {
+  const records = await recentProjects.loadIndex();
+  const body = document.createElement("div");
+
+  if (records.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "rp-empty";
+    empty.textContent = "No recent projects yet — generate a mosaic to create one.";
+    body.appendChild(empty);
+  }
+
+  const objectUrls = [];
+  for (const record of records) {
+    const row = document.createElement("div");
+    row.className = "rp-row";
+
+    const thumb = document.createElement("img");
+    thumb.className = "rp-thumb";
+    if (record.thumbnailBlob) {
+      const url = URL.createObjectURL(record.thumbnailBlob);
+      objectUrls.push(url);
+      thumb.src = url;
+    }
+
+    const info = document.createElement("div");
+    info.className = "rp-info";
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "rp-name";
+    nameInput.value = record.name || record.sourceFileName || "Untitled";
+    const commitRename = () => {
+      const value = nameInput.value.trim();
+      if (value) recentProjects.renameProject(record.id, value);
+    };
+    nameInput.addEventListener("blur", commitRename);
+    nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") nameInput.blur(); });
+
+    const meta = document.createElement("div");
+    meta.className = "rp-meta";
+    meta.textContent = `${layoutModeLabel(record.mode)} • ${formatRecentTimestamp(record.updatedAt)}`;
+
+    info.append(nameInput, meta);
+
+    const actions = document.createElement("div");
+    actions.className = "rp-actions";
+    const loadBtn = document.createElement("button");
+    loadBtn.type = "button";
+    loadBtn.textContent = "Load";
+    loadBtn.addEventListener("click", () => loadRecentProject(record));
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "rp-delete";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", () => deleteRecentProject(record.id, record.name));
+    actions.append(loadBtn, deleteBtn);
+
+    row.append(thumb, info, actions);
+    body.appendChild(row);
+  }
+
+  showDialog({
+    title: "Recent Projects",
+    desc: `Reopen a previously loaded photo with its settings. Keeps the most recent ${recentProjects.MAX_RECENT_PROJECTS}.`,
+    bodyEl: body,
+    actions: [{ label: "Close", onClick: closeDialog }],
+    wide: true,
+  });
+  // The dialog owns these object URLs for its lifetime; revoke them once
+  // it's closed (dialogRoot cleared) rather than leaking blob: URLs.
+  const revokeOnClose = () => {
+    if (!el.dialogRoot.contains(body)) {
+      objectUrls.forEach((u) => URL.revokeObjectURL(u));
+    } else {
+      requestAnimationFrame(revokeOnClose);
+    }
+  };
+  requestAnimationFrame(revokeOnClose);
+}
+
+function layoutModeLabel(mode) {
+  const btn = el.layoutModeSeg.querySelector(`button[data-layout="${mode}"]`);
+  return btn ? btn.textContent : mode;
+}
+
+function formatRecentTimestamp(isoText) {
+  const d = new Date(isoText);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, {
+    month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
+  });
+}
+
+async function loadRecentProject(record) {
+  if (!record.sourceBlob) {
+    setStatus(`Couldn't reopen — the cached photo for “${record.name}” is missing.`);
+    return;
+  }
+  await loadImageFromBlob(record.sourceBlob, record.sourceFileName);
+  // applyLoadedImage() clears state.currentProjectId (a fresh load always
+  // looks like a brand-new project) -- restore it here so the next
+  // generate updates this same entry instead of creating a duplicate.
+  state.currentProjectId = record.id;
+  applySettings(record.settings);
+  closeDialog();
+  setStatus(`Reopened “${record.name}” — click Generate to render it.`);
+}
+
+function deleteRecentProject(id, name) {
+  const body = document.createElement("p");
+  body.textContent = `Remove "${name}" from Recent Projects? This only removes the cached copy `
+    + "and thumbnail — it doesn't touch the original photo.";
+
+  showDialog({
+    title: "Delete Recent Project?",
+    bodyEl: body,
+    actions: [
+      {
+        label: "Delete", primary: true, onClick: async () => {
+          await recentProjects.deleteProject(id);
+          if (state.currentProjectId === id) state.currentProjectId = null;
+          openRecentProjects();
+        },
+      },
+      { label: "Cancel", onClick: closeDialog },
+    ],
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Batch Mode -- an ephemeral (session-only) ordered list of Recent Projects
+// ids, built by uploading several photos at once. Ties directly into
+// Recent Projects: each uploaded photo becomes a *pending* record
+// (recentProjects.createPending), "Open" loads one item into the main
+// editor just like Recent Projects' own Load button (restoring its
+// settings if it's been generated before), and Generate All / Export All
+// operate on the whole batch at once. See js/core/recentProjects.js's
+// module docstring for the storage-side half of this.
+// ---------------------------------------------------------------------------
+
+async function createBatch(files) {
+  const ids = [];
+  const failed = [];
+  for (const file of files) {
+    let canvas;
+    try {
+      const bitmap = await createImageBitmap(file);
+      canvas = makeCanvas(bitmap.width, bitmap.height);
+      canvas.getContext("2d").drawImage(bitmap, 0, 0);
+    } catch {
+      failed.push(file.name);
+      continue;
+    }
+    try {
+      const defaultName = file.name.replace(/\.[^./\\]+$/, "");
+      ids.push(await recentProjects.createPending(defaultName, canvas, file.name));
+    } catch {
+      failed.push(file.name);
+    }
+  }
+
+  if (ids.length === 0) {
+    setStatus("Couldn't start a batch — none of the chosen files could be opened.");
+    return;
+  }
+
+  state.currentBatchIds = ids;
+  let msg = `Batch started — ${ids.length} photo(s) added.`;
+  if (failed.length) {
+    const shown = failed.slice(0, 3).join(", ") + (failed.length > 3 ? "..." : "");
+    msg += ` (${failed.length} skipped: ${shown})`;
+  }
+  setStatus(msg);
+  await openBatchMode();
+}
+
+async function openBatchMode() {
+  const records = await recentProjects.loadIndex();
+  const byId = new Map(records.map(r => [r.id, r]));
+  const body = document.createElement("div");
+
+  if (state.currentBatchIds.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "rp-empty";
+    empty.textContent = "No batch active — use “Upload a Batch...” to start one.";
+    body.appendChild(empty);
+  }
+
+  const objectUrls = [];
+  for (const id of state.currentBatchIds) {
+    const record = byId.get(id);
+    if (record) body.appendChild(buildBatchItemRow(record, objectUrls));
+  }
+
+  showDialog({
+    title: "Batch Mode",
+    desc: "Open a photo to adjust its own settings, or use Generate All / Export All below to "
+      + "run the whole batch with the settings currently on the panel. The batch isn't saved "
+      + "between sessions — uploading a new one replaces it.",
+    bodyEl: body,
+    actions: [
+      { label: "Generate All", primary: true, onClick: batchGenerateAll },
+      { label: "Export All...", onClick: batchExportAll },
+      { label: "Close", onClick: closeDialog },
+    ],
+    wide: true,
+  });
+  // Same object-URL lifetime handling as openRecentProjects() above.
+  const revokeOnClose = () => {
+    if (!el.dialogRoot.contains(body)) {
+      objectUrls.forEach((u) => URL.revokeObjectURL(u));
+    } else {
+      requestAnimationFrame(revokeOnClose);
+    }
+  };
+  requestAnimationFrame(revokeOnClose);
+}
+
+function buildBatchItemRow(record, objectUrls) {
+  const row = document.createElement("div");
+  row.className = "rp-row";
+
+  const thumb = document.createElement("img");
+  thumb.className = "rp-thumb";
+  if (record.thumbnailBlob) {
+    const url = URL.createObjectURL(record.thumbnailBlob);
+    objectUrls.push(url);
+    thumb.src = url;
+  }
+
+  const info = document.createElement("div");
+  info.className = "rp-info";
+  const title = document.createElement("div");
+  title.textContent = record.name || record.sourceFileName || "Untitled";
+  const status = document.createElement("div");
+  status.className = record.mode ? "rp-status rp-status-done" : "rp-status rp-status-pending";
+  status.textContent = record.mode
+    ? `Generated — ${layoutModeLabel(record.mode)}`
+    : "Pending — not generated yet";
+  info.append(title, status);
+
+  const actions = document.createElement("div");
+  actions.className = "rp-actions";
+  const openBtn = document.createElement("button");
+  openBtn.type = "button";
+  openBtn.textContent = "Open";
+  openBtn.addEventListener("click", () => openBatchItem(record));
+  actions.appendChild(openBtn);
+
+  row.append(thumb, info, actions);
+  return row;
+}
+
+async function openBatchItem(record) {
+  if (!record.sourceBlob) {
+    setStatus(`Couldn't open — the cached photo for "${record.name}" is missing.`);
+    return;
+  }
+  await loadImageFromBlob(record.sourceBlob, record.sourceFileName);
+  // applyLoadedImage() clears state.currentProjectId -- restore it here so
+  // the next generate updates this same batch item instead of creating a
+  // duplicate Recent Projects entry.
+  state.currentProjectId = record.id;
+  if (record.settings) applySettings(record.settings);
+  closeDialog();
+  setStatus(`Opened "${record.name}" from the batch — adjust settings and click Generate.`);
+}
+
+// There's no single shared entry point the way the desktop app's
+// _on_generate() dispatches internally to whichever per-mode handler is
+// current -- each mode's Generate button here calls its own generate
+// function directly. This small wrapper gives Batch Mode's Generate All
+// the same "dispatch to the current mode" behavior without duplicating any
+// per-mode generate logic.
+function generateForCurrentMode() {
+  switch (state.layoutMode) {
+    case "adaptive": return generateAdaptiveMosaic();
+    case "dice": return generateDiceMosaic();
+    case "rubiks": return generateRubiksMosaic();
+    case "meta": return generateMetaMosaic();
+    case "crossstitch": return generateCrossStitchMosaic();
+    case "foundobject": return generateFoundObjectMosaic();
+    case "radial": return generateRadialMosaic();
+    case "stainedglass": return generateStainedglassMosaic();
+    case "lithophane": return generateLithophaneMosaic();
+    case "stringart": return generateStringartMosaic();
+    default: return generateMosaic();
+  }
+}
+
+async function batchGenerateAll() {
+  if (state.currentBatchIds.length === 0) {
+    setStatus("No items in the current batch.");
+    return;
+  }
+  closeDialog();
+  setStatus(`Batch: generating ${state.currentBatchIds.length} item(s)...`);
+
+  const records = await recentProjects.loadIndex();
+  const byId = new Map(records.map(r => [r.id, r]));
+  let done = 0;
+  // Every item is generated with whatever settings are currently on the
+  // panel (not each item's own previously-saved settings, if any) --
+  // Generate All runs the whole batch through one shared configuration;
+  // opening an item individually (openBatchItem, above) is how a single
+  // photo gets its own settings.
+  for (const id of state.currentBatchIds) {
+    const record = byId.get(id);
+    if (!record || !record.sourceBlob) {
+      setStatus(`Batch: skipping "${record ? record.name : id}" — cached photo missing.`);
+      continue;
+    }
+    await loadImageFromBlob(record.sourceBlob, record.sourceFileName);
+    state.currentProjectId = id;
+    await generateForCurrentMode();
+    done++;
+  }
+
+  setStatus(`Batch complete — ${done} of ${state.currentBatchIds.length} item(s) generated.`);
+  await openBatchMode();
+}
+
+async function batchExportAll() {
+  if (state.currentBatchIds.length === 0) {
+    setStatus("No items in the current batch.");
+    return;
+  }
+  const records = await recentProjects.loadIndex();
+  const byId = new Map(records.map(r => [r.id, r]));
+
+  const zip = new JSZip();
+  const usedNames = new Set();
+  let included = 0;
+  for (const id of state.currentBatchIds) {
+    const record = byId.get(id);
+    if (!record || !record.outputBlob) continue;
+    const safeName = (record.name || id).replace(/[^\w\-. ]/g, "_").trim() || id;
+    let arcname = `${safeName}.png`;
+    let n = 2;
+    while (usedNames.has(arcname)) {
+      arcname = `${safeName} (${n}).png`;
+      n++;
+    }
+    usedNames.add(arcname);
+    zip.file(arcname, record.outputBlob);
+    included++;
+  }
+
+  const total = state.currentBatchIds.length;
+  if (included === 0) {
+    setStatus("Nothing to export yet — generate at least one batch item first.");
+    return;
+  }
+  const blob = await zip.generateAsync({ type: "blob" });
+  downloadBlob(blob, "batch_export.zip");
+  const note = included === total ? "" : " (the rest haven't been generated yet)";
+  setStatus(`Exported ${included} of ${total} batch item(s) to batch_export.zip${note}.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -2842,6 +4458,35 @@ function collectSettings() {
       // its two sliders round-trip; re-assign photos after importing.
       foundObjectNumColors: parseInt(el.foundObjectNumColors.value, 10),
       foundObjectTintStrength: parseInt(el.foundObjectTintStrength.value, 10),
+
+      radialRings: parseInt(el.radialRings.value, 10),
+      radialBaseSegments: parseInt(el.radialBaseSegments.value, 10),
+      radialNumColors: parseInt(el.radialNumColors.value, 10),
+
+      // The seed rounds out this mode's settings so re-importing (or
+      // reloading a Recent Project) reproduces the *exact* same piece
+      // layout, not just the same piece count/spacing.
+      stainedglassPieceCount: parseInt(el.stainedglassPieceCount.value, 10),
+      stainedglassNumColors: parseInt(el.stainedglassNumColors.value, 10),
+      stainedglassLeadWidth: parseInt(el.stainedglassLeadWidth.value, 10),
+      stainedglassLeadColor: rgbToHex(state.stainedglassLeadColor),
+      stainedglassSeed: getStainedglassSeed(),
+
+      lithophaneWidthMm: getLithophaneFloat(el.lithophaneWidth, 100),
+      lithophaneHeightMm: getLithophaneFloat(el.lithophaneHeight, 75),
+      lithophaneLockAspect: el.lithophaneLockAspect.checked,
+      lithophaneDetail: parseInt(el.lithophaneDetail.value, 10),
+      lithophaneMinThickness: getLithophaneFloat(el.lithophaneMinThickness, 0.8),
+      lithophaneMaxThickness: getLithophaneFloat(el.lithophaneMaxThickness, 3.2),
+      lithophaneInvert: el.lithophaneInvert.checked,
+
+      stringartShape: [...el.stringartShapeSeg.children].find(b => b.classList.contains("active")).dataset.shape,
+      stringartNumPins: parseInt(el.stringartPins.value, 10),
+      stringartNumLines: parseInt(el.stringartLines.value, 10),
+      stringartFrameSize: parseFloat(el.stringartFrameSize.value) || 0,
+      stringartFrameSizeUnit: el.stringartFrameSizeUnit.value,
+      stringartThreadColor: rgbToHex(state.stringartThreadColor),
+      stringartBgColor: rgbToHex(state.stringartBgColor),
     },
   };
 }
@@ -2931,6 +4576,71 @@ function applySettings(data) {
     el.foundObjectTintStrengthVal.textContent = s.foundObjectTintStrength;
     state.foundObjectTintStrength = s.foundObjectTintStrength;
   }
+
+  if (Number.isFinite(s.radialRings)) { el.radialRings.value = s.radialRings; el.radialRingsVal.textContent = s.radialRings; }
+  if (Number.isFinite(s.radialBaseSegments)) {
+    el.radialBaseSegments.value = s.radialBaseSegments;
+    el.radialBaseSegmentsVal.textContent = s.radialBaseSegments;
+  }
+  if (Number.isFinite(s.radialNumColors)) { el.radialNumColors.value = s.radialNumColors; el.radialNumColorsVal.textContent = s.radialNumColors; }
+  updateRadialCellEstimate();
+
+  if (Number.isFinite(s.stainedglassPieceCount)) {
+    el.stainedglassPieceCount.value = s.stainedglassPieceCount;
+    el.stainedglassPieceCountVal.textContent = s.stainedglassPieceCount;
+  }
+  if (Number.isFinite(s.stainedglassNumColors)) {
+    el.stainedglassNumColors.value = s.stainedglassNumColors;
+    el.stainedglassNumColorsVal.textContent = s.stainedglassNumColors;
+  }
+  if (Number.isFinite(s.stainedglassLeadWidth)) {
+    el.stainedglassLeadWidth.value = s.stainedglassLeadWidth;
+    el.stainedglassLeadWidthVal.textContent = s.stainedglassLeadWidth;
+  }
+  if (s.stainedglassLeadColor) {
+    state.stainedglassLeadColor = hexToRgb(s.stainedglassLeadColor);
+    setSwatchButton(el.stainedglassLeadColorBtn, state.stainedglassLeadColor);
+    el.stainedglassLeadColorPicker.value = s.stainedglassLeadColor;
+  }
+  if (Number.isFinite(s.stainedglassSeed)) el.stainedglassSeed.value = s.stainedglassSeed;
+  updateStainedglassPieceEstimate();
+
+  if (Number.isFinite(s.lithophaneWidthMm)) el.lithophaneWidth.value = s.lithophaneWidthMm;
+  if (Number.isFinite(s.lithophaneHeightMm)) el.lithophaneHeight.value = s.lithophaneHeightMm;
+  if (typeof s.lithophaneLockAspect === "boolean") el.lithophaneLockAspect.checked = s.lithophaneLockAspect;
+  if (Number.isFinite(s.lithophaneDetail)) {
+    el.lithophaneDetail.value = s.lithophaneDetail;
+    el.lithophaneDetailVal.textContent = s.lithophaneDetail;
+  }
+  if (Number.isFinite(s.lithophaneMinThickness)) el.lithophaneMinThickness.value = s.lithophaneMinThickness;
+  if (Number.isFinite(s.lithophaneMaxThickness)) el.lithophaneMaxThickness.value = s.lithophaneMaxThickness;
+  if (typeof s.lithophaneInvert === "boolean") el.lithophaneInvert.checked = s.lithophaneInvert;
+  updateLithophaneEstimate();
+
+  if (s.stringartShape === "circle" || s.stringartShape === "rect") {
+    [...el.stringartShapeSeg.children].forEach(b => b.classList.toggle("active", b.dataset.shape === s.stringartShape));
+  }
+  if (Number.isFinite(s.stringartNumPins)) {
+    el.stringartPins.value = s.stringartNumPins;
+    el.stringartPinsVal.textContent = s.stringartNumPins;
+  }
+  if (Number.isFinite(s.stringartNumLines)) {
+    el.stringartLines.value = s.stringartNumLines;
+    el.stringartLinesVal.textContent = s.stringartNumLines;
+  }
+  if (Number.isFinite(s.stringartFrameSize)) el.stringartFrameSize.value = s.stringartFrameSize;
+  if (PIECE_SIZE_UNITS.includes(s.stringartFrameSizeUnit)) el.stringartFrameSizeUnit.value = s.stringartFrameSizeUnit;
+  if (s.stringartThreadColor) {
+    state.stringartThreadColor = hexToRgb(s.stringartThreadColor);
+    setSwatchButton(el.stringartThreadColorBtn, state.stringartThreadColor);
+    el.stringartThreadColorPicker.value = s.stringartThreadColor;
+  }
+  if (s.stringartBgColor) {
+    state.stringartBgColor = hexToRgb(s.stringartBgColor);
+    setSwatchButton(el.stringartBgColorBtn, state.stringartBgColor);
+    el.stringartBgColorPicker.value = s.stringartBgColor;
+  }
+  updateStringartEstimate();
 
   // Layout mode last, once every mode's own controls are already in place.
   if (s.layoutMode) setLayoutMode(s.layoutMode);
@@ -3103,7 +4813,10 @@ setSwatchButton(el.monoColorBtn, state.monochromeBaseColor);
 setSwatchButton(el.dieColorBtn, state.dieColor);
 setSwatchButton(el.pipColorBtn, state.pipColor);
 updateColorSourceUI();
+el.stainedglassSeed.value = String(randomStainedglassSeed());
 updateSizeEstimate();
 updatePanelEstimate();
 updateRubiksSizeEstimate();
+updateRadialCellEstimate();
+updateStainedglassPieceEstimate();
 refreshPreview();

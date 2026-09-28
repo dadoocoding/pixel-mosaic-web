@@ -8,6 +8,7 @@
 import { quantizePoints } from "./core/kmeans.js";
 import { quantizeToFixedPalette } from "./core/quantize.js";
 import { computeBrickLayout } from "./core/bricks.js";
+import { generateStringartSequence } from "./core/stringart.js";
 
 self.onmessage = (e) => {
   const { id, type, payload } = e.data;
@@ -25,6 +26,16 @@ self.onmessage = (e) => {
       const { grid, gridW, gridH, allowedSizes } = payload;
       const bricks = computeBrickLayout(grid, gridW, gridH, allowedSizes);
       result = { bricks };
+    } else if (type === "stringart") {
+      // The greedy loop is the one genuinely slow step in this app that
+      // isn't already backed by a fast vectorized library (K-Means/fixed-
+      // palette quantization are still routed through the worker mostly
+      // for consistency) -- at the top of the pin/line sliders' range this
+      // can take several seconds, so it runs here to keep the tab
+      // responsive instead of freezing the main thread.
+      const { target, shape, numPins, numLines } = payload;
+      const { sequence, canvas } = generateStringartSequence(target, shape, numPins, numLines);
+      result = { sequence, canvas };
     } else {
       throw new Error(`Unknown worker task type: ${type}`);
     }

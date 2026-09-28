@@ -26,6 +26,17 @@
     </div>
     <input type="file" id="fileInput" accept="image/*" hidden>
 
+    <div class="button-row">
+      <button id="recentProjectsBtn">Recent Projects...</button>
+    </div>
+    <div class="button-row">
+      <button id="batchUploadBtn">Upload a Batch...</button>
+    </div>
+    <input type="file" id="batchFileInput" accept="image/*" multiple hidden>
+    <div class="button-row">
+      <button id="batchModeBtn">Batch Mode...</button>
+    </div>
+
     <div class="button-row two-up">
       <button id="previewSettingsBtn">Preview...</button>
       <button id="exportSettingsBtn">Export Settings (JSON)</button>
@@ -82,6 +93,10 @@
       <button data-layout="meta" type="button">Meta</button>
       <button data-layout="crossstitch" type="button">Cross-Stitch</button>
       <button data-layout="foundobject" type="button">Found Object</button>
+      <button data-layout="radial" type="button">Radial</button>
+      <button data-layout="stainedglass" type="button">Stained Glass</button>
+      <button data-layout="lithophane" type="button">Lithophane</button>
+      <button data-layout="stringart" type="button">String Art</button>
     </div>
 
     <div id="classicPanel">
@@ -129,6 +144,11 @@
         <button id="previewBricksCsvBtn" disabled>Preview...</button>
         <button id="exportBricksCsvBtn" disabled>Save Brick List (CSV)</button>
       </div>
+      <div class="price-row">
+        <label for="brickPrice">Price per piece: $</label>
+        <input type="number" id="brickPrice" min="0" step="0.01" placeholder="optional">
+        <span class="hint-inline">(adds a cost estimate)</span>
+      </div>
       <div class="button-row two-up">
         <button id="previewShoppingListBtn" disabled>Preview...</button>
         <button id="exportShoppingListBtn" disabled>Save Shopping List (CSV)</button>
@@ -147,6 +167,11 @@
         <button id="previewJsonBtn" disabled>Preview...</button>
         <button id="exportJsonBtn" disabled>Save Grid Data (JSON)</button>
       </div>
+      <div class="price-row">
+        <label for="classicPrice">Price per piece: $</label>
+        <input type="number" id="classicPrice" min="0" step="0.01" placeholder="optional">
+        <span class="hint-inline">(adds a cost estimate)</span>
+      </div>
       <div class="button-row two-up">
         <button id="previewCsvBtn" disabled>Preview...</button>
         <button id="exportCsvBtn" disabled>Save Grid Data (CSV)</button>
@@ -154,6 +179,14 @@
       <div class="button-row two-up">
         <button id="previewPaintByNumberBtn" disabled>Preview...</button>
         <button id="exportPaintByNumberBtn" disabled>Save Paint-by-Number (PDF)</button>
+      </div>
+      <!-- Color-separated SVG -- one <g> layer per palette color actually
+           used, for opening in a vector editor (Illustrator, Inkscape,
+           Cricut Design Space, a laser cutter's software...) and working
+           with a single color's cells at a time. -->
+      <div class="button-row two-up">
+        <button id="previewSvgBtn" disabled>Preview...</button>
+        <button id="exportSvgBtn" disabled>Save Color-Separated (SVG)</button>
       </div>
     </div>
 
@@ -169,6 +202,11 @@
       <div class="button-row two-up">
         <button id="previewAdaptiveTilesBtn" disabled>Preview...</button>
         <button id="exportAdaptiveTilesBtn" disabled>Save Tile List (JSON)</button>
+      </div>
+      <div class="price-row">
+        <label for="adaptivePrice">Price per cell: $</label>
+        <input type="number" id="adaptivePrice" min="0" step="0.01" placeholder="optional">
+        <span class="hint-inline">(adds a cost estimate)</span>
       </div>
       <div class="button-row two-up">
         <button id="previewAdaptiveShoppingBtn" disabled>Preview...</button>
@@ -191,6 +229,11 @@
       <div class="button-row two-up">
         <button id="previewDiceGuideBtn" disabled>Preview...</button>
         <button id="exportDiceGuideBtn" disabled>Save Dice Build Guide (PDF)</button>
+      </div>
+      <div class="price-row">
+        <label for="dicePrice">Price per die: $</label>
+        <input type="number" id="dicePrice" min="0" step="0.01" placeholder="optional">
+        <span class="hint-inline">(adds a cost estimate)</span>
       </div>
       <div class="button-row two-up">
         <button id="previewDiceShoppingBtn" disabled>Preview...</button>
@@ -221,6 +264,11 @@
       <div class="button-row two-up">
         <button id="previewRubiksGuideBtn" disabled>Preview...</button>
         <button id="exportRubiksGuideBtn" disabled>Save Cube Build Guide (PDF)</button>
+      </div>
+      <div class="price-row">
+        <label for="rubiksPrice">Price per cube: $</label>
+        <input type="number" id="rubiksPrice" min="0" step="0.01" placeholder="optional">
+        <span class="hint-inline">(adds a cost estimate)</span>
       </div>
       <div class="button-row two-up">
         <button id="previewRubiksShoppingBtn" disabled>Preview...</button>
@@ -257,6 +305,11 @@
         <button id="previewCrossStitchPatternBtn" disabled>Preview...</button>
         <button id="exportCrossStitchPatternBtn" disabled>Save Pattern Chart (PDF)</button>
       </div>
+      <div class="price-row">
+        <label for="crossstitchPrice">Price per skein: $</label>
+        <input type="number" id="crossstitchPrice" min="0" step="0.01" placeholder="optional">
+        <span class="hint-inline">(adds a cost estimate)</span>
+      </div>
       <div class="button-row two-up">
         <button id="previewCrossStitchShoppingBtn" disabled>Preview...</button>
         <button id="exportCrossStitchShoppingBtn" disabled>Save Floss Shopping List (CSV)</button>
@@ -287,6 +340,11 @@
         <button id="previewFoundObjectJsonBtn" disabled>Preview...</button>
         <button id="exportFoundObjectJsonBtn" disabled>Save Object Data (JSON)</button>
       </div>
+      <div class="price-row">
+        <label for="foundobjectPrice">Price per object: $</label>
+        <input type="number" id="foundobjectPrice" min="0" step="0.01" placeholder="optional">
+        <span class="hint-inline">(adds a cost estimate)</span>
+      </div>
       <div class="button-row two-up">
         <button id="previewFoundObjectCsvBtn" disabled>Preview...</button>
         <button id="exportFoundObjectCsvBtn" disabled>Save Object Data (CSV)</button>
@@ -297,11 +355,211 @@
       </div>
     </div>
 
+    <div id="radialPanel" hidden>
+      <p class="hint">Rings of pie-slice cells around a center point instead
+        of a rectangular grid. Each ring out has more, wider wedges than the
+        one before it, so cells stay roughly the same physical size
+        ring-to-ring.</p>
+
+      <label for="radialRings">Rings</label>
+      <div class="slider-row"><input type="range" id="radialRings" min="2" max="50" value="10"><span class="slider-val" id="radialRingsVal">10</span></div>
+
+      <label for="radialBaseSegments">Base segments <span class="hint-inline">(innermost ring's wedge count)</span></label>
+      <div class="slider-row"><input type="range" id="radialBaseSegments" min="3" max="24" value="6"><span class="slider-val" id="radialBaseSegmentsVal">6</span></div>
+
+      <p class="hint" id="radialCellEstimate"></p>
+
+      <label for="radialNumColors">Number of colors (0 = auto)</label>
+      <div class="slider-row"><input type="range" id="radialNumColors" min="0" max="48" value="0"><span class="slider-val" id="radialNumColorsVal">0</span></div>
+
+      <div class="button-row"><button id="radialGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <label>Export</label>
+      <div class="button-row two-up">
+        <button id="previewRadialCellsBtn" disabled>Preview...</button>
+        <button id="exportRadialCellsBtn" disabled>Save Cell List (JSON)</button>
+      </div>
+      <div class="price-row">
+        <label for="radialPrice">Price per cell: $</label>
+        <input type="number" id="radialPrice" min="0" step="0.01" placeholder="optional">
+        <span class="hint-inline">(adds a cost estimate)</span>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewRadialShoppingBtn" disabled>Preview...</button>
+        <button id="exportRadialShoppingBtn" disabled>Save Color Shopping List (CSV)</button>
+      </div>
+    </div>
+
+    <div id="stainedglassPanel" hidden>
+      <p class="hint">Irregular polygon pieces scattered like real stained
+        glass or a stepping-stone mosaic, with a lead/grout line between
+        them. Piece spacing uses the Cell Size slider above; Background
+        color has no effect here since every pixel belongs to a piece or a
+        lead line.</p>
+
+      <label for="stainedglassPieceCount">Target piece count</label>
+      <div class="slider-row"><input type="range" id="stainedglassPieceCount" min="10" max="2000" value="150"><span class="slider-val" id="stainedglassPieceCountVal">150</span></div>
+
+      <p class="hint" id="stainedglassPieceEstimate"></p>
+
+      <label for="stainedglassNumColors">Number of colors (0 = auto)</label>
+      <div class="slider-row"><input type="range" id="stainedglassNumColors" min="0" max="48" value="0"><span class="slider-val" id="stainedglassNumColorsVal">0</span></div>
+
+      <label for="stainedglassLeadWidth">Lead line width (px, 0 = none)</label>
+      <div class="slider-row"><input type="range" id="stainedglassLeadWidth" min="0" max="12" value="3"><span class="slider-val" id="stainedglassLeadWidthVal">3</span></div>
+
+      <label>Lead line color</label>
+      <button id="stainedglassLeadColorBtn" class="color-swatch-btn">#141414</button>
+      <input type="color" id="stainedglassLeadColorPicker" value="#141414" hidden>
+
+      <label for="stainedglassSeed">Layout seed <span class="hint-inline">(same seed + settings = same pieces)</span></label>
+      <div class="piece-size-row">
+        <input type="number" id="stainedglassSeed" min="0" step="1" value="1">
+        <button id="stainedglassNewLayoutBtn" type="button">&#x1F3B2; New Layout</button>
+      </div>
+
+      <div class="button-row"><button id="stainedglassGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <label>Export</label>
+      <div class="button-row two-up">
+        <button id="previewStainedglassCellsBtn" disabled>Preview...</button>
+        <button id="exportStainedglassCellsBtn" disabled>Save Cell List (JSON)</button>
+      </div>
+      <div class="price-row">
+        <label for="stainedglassPrice">Price per piece: $</label>
+        <input type="number" id="stainedglassPrice" min="0" step="0.01" placeholder="optional">
+        <span class="hint-inline">(adds a cost estimate)</span>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewStainedglassShoppingBtn" disabled>Preview...</button>
+        <button id="exportStainedglassShoppingBtn" disabled>Save Color Shopping List (CSV)</button>
+      </div>
+    </div>
+
+    <div id="lithophanePanel" hidden>
+      <p class="hint">Classic single-material backlit height-map: thin lets
+        light through (bright), thick blocks it (dark). Exports as a real
+        STL mesh, ready to drop into a slicer -- no assembly step, it's
+        one continuous print. Automatically smoothed between height
+        samples so the print reads as a photographic ramp rather than a
+        blocky/pixelated heightmap, at any Detail level. Number of
+        colors, Background color, and the shared Cell Size / Piece Size
+        controls above have no effect here.</p>
+
+      <label for="lithophaneWidth">Print width &times; height (mm)</label>
+      <div class="piece-size-row">
+        <input type="number" id="lithophaneWidth" min="1" step="1" value="100">
+        <span>&times;</span>
+        <input type="number" id="lithophaneHeight" min="1" step="1" value="75">
+        <label class="checkbox-label"><input type="checkbox" id="lithophaneLockAspect" checked> Lock aspect</label>
+      </div>
+
+      <label for="lithophaneDetail">Detail (height samples across width)</label>
+      <div class="slider-row"><input type="range" id="lithophaneDetail" min="20" max="700" value="150"><span class="slider-val" id="lithophaneDetailVal">150</span></div>
+
+      <p class="hint" id="lithophaneEstimate"></p>
+
+      <label>Min / max thickness (mm)</label>
+      <div class="piece-size-row">
+        <input type="number" id="lithophaneMinThickness" min="0.1" step="0.1" value="0.8">
+        <span>to</span>
+        <input type="number" id="lithophaneMaxThickness" min="0.1" step="0.1" value="3.2">
+      </div>
+
+      <label class="checkbox-label"><input type="checkbox" id="lithophaneInvert"> Invert (dark = thin)</label>
+
+      <div class="button-row"><button id="lithophaneGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <label>Export</label>
+      <div class="button-row">
+        <button id="exportLithophaneStlBtn" disabled>Save STL (3D print)</button>
+      </div>
+    </div>
+
+    <div id="stringartPanel" hidden>
+      <p class="hint">Pins around a circular or rectangular frame, connected
+        by one continuous thread whose crossings approximate the photo in
+        grayscale (monochrome thread only, for now). Number of colors and
+        the shared Grid / Cell Size controls above have no effect here --
+        frame size, thread color, and background color are set below.</p>
+
+      <label>Frame shape</label>
+      <div class="segmented" id="stringartShapeSeg">
+        <button data-shape="circle" class="active" type="button">Circular</button>
+        <button data-shape="rect" type="button">Rectangular</button>
+      </div>
+
+      <label for="stringartPins">Number of pins</label>
+      <div class="slider-row"><input type="range" id="stringartPins" min="60" max="360" value="180"><span class="slider-val" id="stringartPinsVal">180</span></div>
+
+      <label for="stringartLines">Number of lines</label>
+      <div class="slider-row"><input type="range" id="stringartLines" min="50" max="3000" value="1200"><span class="slider-val" id="stringartLinesVal">1200</span></div>
+
+      <p class="hint" id="stringartEstimate"></p>
+
+      <label for="stringartFrameSize">Frame size <span class="hint-inline">(diameter for circular, side length for rectangular)</span></label>
+      <div class="piece-size-row">
+        <input type="number" id="stringartFrameSize" min="0" step="0.01" value="12">
+        <select id="stringartFrameSizeUnit">
+          <option value="in">in</option>
+          <option value="mm">mm</option>
+          <option value="cm">cm</option>
+        </select>
+      </div>
+
+      <label>Thread color</label>
+      <button id="stringartThreadColorBtn" class="color-swatch-btn">#141414</button>
+      <input type="color" id="stringartThreadColorPicker" value="#141414" hidden>
+
+      <label>Background color</label>
+      <button id="stringartBgColorBtn" class="color-swatch-btn">#fafaf5</button>
+      <input type="color" id="stringartBgColorPicker" value="#fafaf5" hidden>
+
+      <div class="button-row"><button id="stringartGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <label>Export</label>
+      <div class="button-row two-up">
+        <button id="previewStringartGuideBtn" disabled>Preview...</button>
+        <button id="exportStringartGuideBtn" disabled>Save Build Guide (PDF)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewStringartSequenceBtn" disabled>Preview...</button>
+        <button id="exportStringartSequenceBtn" disabled>Save Pin Sequence (JSON)</button>
+      </div>
+      <div class="price-row">
+        <label for="stringartPrice">Price per unit length of thread: $</label>
+        <input type="number" id="stringartPrice" min="0" step="0.01" placeholder="optional">
+        <span class="hint-inline">(adds a cost estimate)</span>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewStringartShoppingBtn" disabled>Preview...</button>
+        <button id="exportStringartShoppingBtn" disabled>Save Shopping List (CSV)</button>
+      </div>
+    </div>
+
     <!-- Preview / Save Image (PNG) -- shared by all layout modes, always
          sits right below whichever panel above is currently shown -->
     <div class="button-row two-up">
       <button id="exportPreviewBtn" disabled>Preview...</button>
       <button id="exportPngBtn" disabled>Save Image (PNG)</button>
+    </div>
+
+    <!-- Poster / multi-page print -- shared by all layout modes, same as
+         Preview/Save Image above. Tiles the current output across several
+         sheets of ordinary paper at the DPI implied by the Piece size
+         field above, so printing at "actual size" (100%) and taping the
+         pages together reproduces the mosaic at exactly that real-world
+         size -- no separate scale/DPI input to keep in sync. -->
+    <label for="posterPaper">Poster <span class="hint-inline">(multi-page print, real-world scale)</span></label>
+    <div class="piece-size-row">
+      <select id="posterPaper">
+        <option value="Letter">Letter</option>
+        <option value="A4">A4</option>
+      </select>
+    </div>
+    <div class="button-row two-up">
+      <button id="previewPosterBtn" disabled>Preview...</button>
+      <button id="exportPosterBtn" disabled>Save Poster (PDF)</button>
     </div>
 
     <p class="footer-note">Pixel Mosaic &mdash; Dadoo Labs</p>
@@ -313,12 +571,19 @@
         <button data-view="source" class="active" type="button">Source</button>
         <button data-view="output" type="button">Output</button>
         <button data-view="bricks" type="button">Bricks</button>
+        <button data-view="compare" type="button">Compare</button>
       </div>
       <div class="zoom-controls">
         <button id="zoomOutBtn" type="button">&minus;</button>
         <button id="zoomFitBtn" type="button">Fit</button>
         <button id="zoomInBtn" type="button">+</button>
       </div>
+    </div>
+
+    <div class="compare-row" id="compareRow" hidden>
+      <span class="compare-label">Before</span>
+      <input type="range" id="compareSlider" min="0" max="100" value="50">
+      <span class="compare-label">After</span>
     </div>
 
     <div id="canvasWrap"><canvas id="previewCanvas"></canvas><img id="previewSaveOverlay" alt="" hidden></div>
