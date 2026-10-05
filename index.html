@@ -94,9 +94,11 @@
       <button data-layout="crossstitch" type="button">Cross-Stitch</button>
       <button data-layout="foundobject" type="button">Found Object</button>
       <button data-layout="radial" type="button">Radial</button>
-      <button data-layout="stainedglass" type="button">Stained Glass</button>
+      <button data-layout="stainedglass" type="button">Tile Mosaic</button>
+      <button data-layout="leadedglass" type="button">Stained Glass</button>
       <button data-layout="lithophane" type="button">Lithophane</button>
       <button data-layout="stringart" type="button">String Art</button>
+      <button data-layout="screwart" type="button">Screw Art</button>
     </div>
 
     <div id="classicPanel">
@@ -254,6 +256,26 @@
 
       <label class="checkbox-label"><input type="checkbox" id="lockAspectRubiks" checked> Lock aspect ratio to source image</label>
 
+      <label>Color matching</label>
+      <div class="segmented" id="rubiksColorModeSeg">
+        <button data-mode="nearest" class="active" type="button">Nearest Color</button>
+        <button data-mode="ramp" type="button">Brightness Ramp</button>
+      </div>
+      <p class="hint" id="rubiksColorModeHint">Nearest Color matches each square
+        to its closest actual sticker hue. Brightness Ramp ignores hue entirely
+        and colors squares by brightness rank instead (White=lightest ...
+        Blue=darkest) — trades photographic color accuracy for richer tonal
+        shading; best on images with strong midtone gradients rather than flat
+        light-on-dark shapes.</p>
+
+      <div id="rubiksBlackGroup">
+        <label class="checkbox-label"><input type="checkbox" id="rubiksIncludeBlack"> Include black (leave sticker off) for shadows/dark areas</label>
+        <p class="hint">The 6 real stickers are all fully-saturated colors, so dark
+          or muted areas of a photo can end up flattened to one color. Leaving a
+          square's sticker off (showing the cube's own black body) is a common
+          real-world fix.</p>
+      </div>
+
       <p class="hint" id="rubiksSizeEstimate"></p>
 
       <div class="button-row"><button id="rubiksGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
@@ -391,11 +413,12 @@
     </div>
 
     <div id="stainedglassPanel" hidden>
-      <p class="hint">Irregular polygon pieces scattered like real stained
-        glass or a stepping-stone mosaic, with a lead/grout line between
-        them. Piece spacing uses the Cell Size slider above; Background
-        color has no effect here since every pixel belongs to a piece or a
-        lead line.</p>
+      <p class="hint">Irregular polygon tiles scattered like a
+        stepping-stone mosaic, with a grout line between them. Piece
+        spacing uses the Cell Size slider above; Background color has no
+        effect here since every pixel belongs to a piece or a grout line.
+        (Looking for real leaded-glass panels? Try the Stained Glass mode
+        instead.)</p>
 
       <label for="stainedglassPieceCount">Target piece count</label>
       <div class="slider-row"><input type="range" id="stainedglassPieceCount" min="10" max="2000" value="150"><span class="slider-val" id="stainedglassPieceCountVal">150</span></div>
@@ -405,10 +428,10 @@
       <label for="stainedglassNumColors">Number of colors (0 = auto)</label>
       <div class="slider-row"><input type="range" id="stainedglassNumColors" min="0" max="48" value="0"><span class="slider-val" id="stainedglassNumColorsVal">0</span></div>
 
-      <label for="stainedglassLeadWidth">Lead line width (px, 0 = none)</label>
+      <label for="stainedglassLeadWidth">Grout line width (px, 0 = none)</label>
       <div class="slider-row"><input type="range" id="stainedglassLeadWidth" min="0" max="12" value="3"><span class="slider-val" id="stainedglassLeadWidthVal">3</span></div>
 
-      <label>Lead line color</label>
+      <label>Grout line color</label>
       <button id="stainedglassLeadColorBtn" class="color-swatch-btn">#141414</button>
       <input type="color" id="stainedglassLeadColorPicker" value="#141414" hidden>
 
@@ -433,6 +456,111 @@
       <div class="button-row two-up">
         <button id="previewStainedglassShoppingBtn" disabled>Preview...</button>
         <button id="exportStainedglassShoppingBtn" disabled>Save Color Shopping List (CSV)</button>
+      </div>
+    </div>
+
+    <div id="leadedglassPanel" hidden>
+      <p class="hint">Traditional leaded-glass window: bold came lines
+        between glass pieces, in a shape and layout you choose below.
+        (Looking for the old irregular stepping-stone pieces? Try the
+        Tile Mosaic mode instead.)</p>
+
+      <label>Frame shape</label>
+      <div class="segmented" id="leadedglassShapeSeg">
+        <button data-shape="rect" class="active" type="button">Rectangle</button>
+        <button data-shape="pointed" type="button">Pointed Arch</button>
+        <button data-shape="rounded" type="button">Rounded Arch</button>
+      </div>
+
+      <label>Style</label>
+      <div class="segmented" id="leadedglassStyleSeg">
+        <button data-style="lattice_subject" class="active" type="button">Lattice + Subject</button>
+        <button data-style="bold_pieces" type="button">Bold Pieces</button>
+        <button data-style="panel_grid" type="button">Panel Grid</button>
+      </div>
+
+      <div id="leadedglassLatticePanel">
+        <label for="leadedglassBodyWidth">Panel width (px)</label>
+        <div class="slider-row"><input type="range" id="leadedglassBodyWidth" min="200" max="1200" value="480"><span class="slider-val" id="leadedglassBodyWidthVal">480</span></div>
+
+        <label for="leadedglassSubjectPieces">Subject pieces</label>
+        <div class="slider-row"><input type="range" id="leadedglassSubjectPieces" min="6" max="60" value="16"><span class="slider-val" id="leadedglassSubjectPiecesVal">16</span></div>
+
+        <label for="leadedglassRings">Sunburst rings</label>
+        <div class="slider-row"><input type="range" id="leadedglassRings" min="2" max="10" value="4"><span class="slider-val" id="leadedglassRingsVal">4</span></div>
+
+        <label for="leadedglassWedges">Sunburst wedges</label>
+        <div class="slider-row"><input type="range" id="leadedglassWedges" min="6" max="32" value="12"><span class="slider-val" id="leadedglassWedgesVal">12</span></div>
+
+        <label for="leadedglassLatticeSeed">Layout seed <span class="hint-inline">(same seed + settings = same pieces)</span></label>
+        <div class="piece-size-row">
+          <input type="number" id="leadedglassLatticeSeed" min="0" step="1" value="1">
+          <button id="leadedglassLatticeNewLayoutBtn" type="button">&#x1F3B2; New Layout</button>
+        </div>
+      </div>
+
+      <div id="leadedglassBoldPanel" hidden>
+        <label for="leadedglassBoldPieceCount">Target piece count</label>
+        <div class="slider-row"><input type="range" id="leadedglassBoldPieceCount" min="6" max="150" value="40"><span class="slider-val" id="leadedglassBoldPieceCountVal">40</span></div>
+
+        <label for="leadedglassBoldSpacing">Piece spacing</label>
+        <div class="slider-row"><input type="range" id="leadedglassBoldSpacing" min="10" max="150" value="40"><span class="slider-val" id="leadedglassBoldSpacingVal">40</span></div>
+
+        <label for="leadedglassBoldSeed">Layout seed <span class="hint-inline">(same seed + settings = same pieces)</span></label>
+        <div class="piece-size-row">
+          <input type="number" id="leadedglassBoldSeed" min="0" step="1" value="1">
+          <button id="leadedglassBoldNewLayoutBtn" type="button">&#x1F3B2; New Layout</button>
+        </div>
+
+        <label class="checkbox-label"><input type="checkbox" id="leadedglassBorderEnabled"> Decorative border <span class="hint-inline">(rectangle frame only)</span></label>
+        <label>Border color</label>
+        <button id="leadedglassBorderColorBtn" class="color-swatch-btn" disabled>#c88c3c</button>
+        <input type="color" id="leadedglassBorderColorPicker" value="#c88c3c" hidden>
+
+        <label>Border corner-accent color</label>
+        <button id="leadedglassBorderAccentBtn" class="color-swatch-btn" disabled>#962828</button>
+        <input type="color" id="leadedglassBorderAccentPicker" value="#962828" hidden>
+      </div>
+
+      <div id="leadedglassGridPanel" hidden>
+        <label for="leadedglassGridCols">Diamonds across</label>
+        <div class="slider-row"><input type="range" id="leadedglassGridCols" min="4" max="60" value="12"><span class="slider-val" id="leadedglassGridColsVal">12</span></div>
+
+        <label for="leadedglassGridCellSize">Diamond size (px)</label>
+        <div class="slider-row"><input type="range" id="leadedglassGridCellSize" min="20" max="200" value="60"><span class="slider-val" id="leadedglassGridCellSizeVal">60</span></div>
+      </div>
+
+      <p class="hint" id="leadedglassEstimate"></p>
+
+      <label for="leadedglassLeadWidth">Came line width (px, 0 = none)</label>
+      <div class="slider-row"><input type="range" id="leadedglassLeadWidth" min="0" max="12" value="3"><span class="slider-val" id="leadedglassLeadWidthVal">3</span></div>
+
+      <label>Came line color</label>
+      <button id="leadedglassLeadColorBtn" class="color-swatch-btn">#141414</button>
+      <input type="color" id="leadedglassLeadColorPicker" value="#141414" hidden>
+
+      <label>Background color <span class="hint-inline">(shows through an arch shape's cut corners)</span></label>
+      <button id="leadedglassBgColorBtn" class="color-swatch-btn">#faf8f0</button>
+      <input type="color" id="leadedglassBgColorPicker" value="#faf8f0" hidden>
+
+      <label for="leadedglassNumColors">Number of colors (0 = auto)</label>
+      <div class="slider-row"><input type="range" id="leadedglassNumColors" min="0" max="48" value="0"><span class="slider-val" id="leadedglassNumColorsVal">0</span></div>
+
+      <div class="button-row"><button id="leadedglassGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <label>Export</label>
+      <div class="button-row two-up">
+        <button id="previewLeadedglassCellsBtn" disabled>Preview...</button>
+        <button id="exportLeadedglassCellsBtn" disabled>Save Cell List (JSON)</button>
+      </div>
+      <div class="price-row">
+        <label for="leadedglassPrice">Price per piece: $</label>
+        <input type="number" id="leadedglassPrice" min="0" step="0.01" placeholder="optional">
+        <span class="hint-inline">(adds a cost estimate)</span>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewLeadedglassShoppingBtn" disabled>Preview...</button>
+        <button id="exportLeadedglassShoppingBtn" disabled>Save Color Shopping List (CSV)</button>
       </div>
     </div>
 
@@ -473,6 +601,43 @@
       <label>Export</label>
       <div class="button-row">
         <button id="exportLithophaneStlBtn" disabled>Save STL (3D print)</button>
+      </div>
+    </div>
+
+    <div id="screwartPanel" hidden>
+      <p class="hint">A 3D relief portrait built from a grid of screws driven
+        to different depths into a wood panel. Darker areas of the source
+        photo become deeper screws; the build guide gives each screw's
+        target depth in millimeters from flush. Number of colors and the
+        shared Grid width/height controls above have no effect here.</p>
+
+      <label for="screwsWide">Screws wide</label>
+      <div class="slider-row"><input type="range" id="screwsWide" min="10" max="150" value="60"><span class="slider-val" id="screwsWideVal">60</span></div>
+
+      <label for="screwsTall">Screws tall</label>
+      <div class="slider-row"><input type="range" id="screwsTall" min="10" max="150" value="60"><span class="slider-val" id="screwsTallVal">60</span></div>
+
+      <label>Min / max depth (mm from flush)</label>
+      <div class="piece-size-row">
+        <input type="number" id="screwartMinDepth" min="0" step="0.1" value="0">
+        <span>to</span>
+        <input type="number" id="screwartMaxDepth" min="0.1" step="0.1" value="12">
+      </div>
+
+      <label class="checkbox-label"><input type="checkbox" id="screwartInvert"> Invert (dark = shallow)</label>
+
+      <p class="hint" id="screwartSizeEstimate"></p>
+
+      <div class="button-row"><button id="screwartGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <label>Export</label>
+      <div class="button-row two-up">
+        <button id="previewScrewartGuideBtn" disabled>Preview...</button>
+        <button id="exportScrewartGuideBtn" disabled>Save Build Guide (PDF)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewScrewartCsvBtn" disabled>Preview...</button>
+        <button id="exportScrewartCsvBtn" disabled>Save Depth List (CSV)</button>
       </div>
     </div>
 

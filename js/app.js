@@ -18,7 +18,9 @@ import {
   renderDiceMosaic, renderDiceKey,
 } from "./core/dice.js";
 import {
-  RUBIKS_CUBE_COLORS, RUBIKS_PALETTE, RUBIKS_COLOR_NAMES, renderRubiksMosaic, renderRubiksBuildSheet,
+  RUBIKS_CUBE_COLORS, RUBIKS_PALETTE, RUBIKS_BLACK_NAME, RUBIKS_BLACK_RGB,
+  RUBIKS_LUMA_ORDER, quantizeGridLumaRanked,
+  rubiksActivePalette, renderRubiksMosaic, renderRubiksBuildSheet,
   renderRubiksKey, rubiksCubeCount, remapRubiksColors,
 } from "./core/rubiks.js";
 import { renderMetaMosaic } from "./core/meta.js";
@@ -38,6 +40,7 @@ import {
   buildAdaptiveTilesJson, buildAdaptiveShoppingListCsv, buildDiceShoppingListCsv,
   buildRubiksShoppingListCsv, buildCrossStitchShoppingListCsv, buildRadialCellsJson,
   buildStainedglassCellsJson, buildStringartSequenceJson, buildStringartShoppingListCsv,
+  buildLeadedglassCellsJson, buildScrewartDepthCsv,
 } from "./core/exportData.js";
 import { CanvasViewer } from "./ui/canvasViewer.js";
 import { nearestPaintMatchesAllBrands, formatBestMatch } from "./core/paintColors.js";
@@ -46,6 +49,17 @@ import {
   STAINEDGLASS_MAX_CELLS, poissonDiscPoints, estimateStainedglassPieceCount,
   stainedglassCanvasSize, sampleStainedglassColors, renderStainedglassMosaic,
 } from "./core/stainedglass.js";
+import {
+  LEADEDGLASS_MAX_CELLS, leadedglassFrameSize,
+  generateLeadedglassBoldPieces, renderLeadedglassBoldPieces, estimateLeadedglassBoldPieceCount,
+  leadedglassPanelGridCanvasSize, leadedglassDiamondGridBounds,
+  sampleLeadedglassPanelGridColors, renderLeadedglassPanelGrid,
+  leadedglassLatticeCanvasSize, generateLeadedglassLatticeSubject, renderLeadedglassLattice,
+  estimateLeadedglassLatticePieceCount,
+  leadedglassBorderWidth, renderLeadedglassBoldPiecesWithBorder,
+  LEADEDGLASS_BORDER_DEFAULT_COLOR, LEADEDGLASS_BORDER_DEFAULT_ACCENT_COLOR,
+  quantizeLeadedglassColorsDefault,
+} from "./core/leadedglass.js";
 import {
   LITHOPHANE_MIN_SAMPLES_ACROSS, LITHOPHANE_MAX_SAMPLES_ACROSS, LITHOPHANE_MAX_TRIANGLES,
   lithophaneSampleGridSize, estimateLithophaneTriangleCount, sampleLithophaneHeightmap,
@@ -57,6 +71,10 @@ import {
   estimateStringartThreadLength, formatStringartFrameSize, formatStringartThreadLength,
   renderStringartPinMap, renderStringartSequencePage,
 } from "./core/stringart.js";
+import {
+  SCREWART_MIN_SCREWS_ACROSS, SCREWART_MAX_SCREWS_ACROSS,
+  sampleScrewartDepthGrid, renderScrewartMosaic, renderScrewartBuildSheet, renderScrewartInfoPage,
+} from "./core/screwart.js";
 
 // Raised from 240 for Counted Cross-Stitch mode's higher-resolution
 // patterns; applies to every mode since they share these sliders.
@@ -141,8 +159,17 @@ const state = {
   cubesWide: 20,
   cubesTall: 15,
   rubiksGrid: null,      // flat [r,g,b] array, row-major (gridW=cubesWide*3, gridH=cubesTall*3)
-  rubiksBaseGrid: null,  // the pristine just-quantized 6-color grid, before any recolor reassignment
+  rubiksBaseGrid: null,  // the pristine just-quantized grid, before any recolor reassignment
   rubiksColorMap: {},    // { cube color name: replacement rgb } -- see remapRubiksColors
+  // Which palette (6 or 7 colors) that base grid was actually quantized
+  // against, and whether includeBlack was on, as of the last Generate
+  // click -- exports and the recolor dialog key off these, not the
+  // checkbox's current (possibly since-changed) value.
+  rubiksPalette: RUBIKS_PALETTE,
+  rubiksIncludeBlack: false,
+  // "nearest" (default, matches actual hue) or "ramp" (ignores hue,
+  // colors purely by brightness rank -- see RUBIKS_COLOR_MODES).
+  rubiksColorMode: "nearest",
 
   tintStrength: 85,      // 0-100; Meta mode's hue/tint overlay strength
 
@@ -194,6 +221,47 @@ const state = {
   stainedglassActualCellCount: null,
   renderedStainedglassMinDist: null,
 
+  // Leaded Glass mode (displayed as "Stained Glass", taking over that name
+  // from the mode above which is now "Tile Mosaic"): traditional
+  // leaded-glass window panels. Three orthogonal axes -- frame shape (rect/
+  // pointed/rounded arch) x generation style (lattice_subject/bold_pieces/
+  // panel_grid) -- sharing one owner-array renderer/color-accumulator (see
+  // core/leadedglass.js). leadedglassLayout mirrors mosaic_gui.py's `layout`
+  // dict: whichever geometry fields the current style's render function
+  // needs (points/minDist for bold_pieces; cellSize/colMin/colsN/rowMin/
+  // rowsN for panel_grid; ecx/ecy/erx/ery/subjectPoints/rings/baseSegments
+  // for lattice_subject), plus canvasW/canvasH shared by all three -- so a
+  // cheap re-render (came-line width/color change) never needs a second
+  // dispatch on which fields exist.
+  leadedglassShape: "rect",
+  leadedglassStyle: "lattice_subject",
+  leadedglassLeadWidth: 3,
+  leadedglassLeadColor: [20, 20, 20],
+  leadedglassBgColor: [250, 248, 240],
+  leadedglassNumColors: 0,
+  leadedglassBoldPieceCount: 40,
+  leadedglassBoldSpacing: 40,
+  leadedglassBoldSeed: 1,
+  leadedglassGridCols: 12,
+  leadedglassGridCellSize: 60,
+  leadedglassBodyWidth: 480,
+  leadedglassSubjectPieces: 16,
+  leadedglassRings: 4,
+  leadedglassWedges: 12,
+  leadedglassLatticeSeed: 1,
+  leadedglassQuantized: null,
+  leadedglassLayout: null,
+  renderedLeadedglassShape: null,
+  renderedLeadedglassStyle: null,
+
+  // Decorative border (Bold Pieces + "rect" frame shape only -- see
+  // core/leadedglass.js's renderLeadedglassBoldPiecesWithBorder). Mirrors
+  // mosaic_gui.py's leadedglass_border_var/leadedglass_border_color/
+  // leadedglass_border_accent_color.
+  leadedglassBorderEnabled: false,
+  leadedglassBorderColor: LEADEDGLASS_BORDER_DEFAULT_COLOR,
+  leadedglassBorderAccentColor: LEADEDGLASS_BORDER_DEFAULT_ACCENT_COLOR,
+
   // Lithophane mode: a single continuous backlit height-map, exported as
   // a real STL mesh -- no 2D palette/grid at all, so most of the shared
   // state (palette, colorNames, renderedGridW/H) simply doesn't apply.
@@ -233,6 +301,23 @@ const state = {
   stringartFrameSize: null,
   stringartFrameSizeUnit: "in",
   stringartThreadLength: null,
+
+  // Screw Art mode: a grid of screws driven to varying depths into a wood
+  // panel (mm from flush), sized in "screws wide/tall" like Rubik's Cube's
+  // own cube-unit sliders rather than the shared cell-based Grid width/
+  // height sliders. screwartDepthGrid is the last successful Generate's
+  // per-screw depth array in mm (what the build guide PDF / depth CSV
+  // export read), kept separate from the live sliders/depth entries so a
+  // stale Generate's export never silently picks up settings changed
+  // since.
+  screwsWide: 60,
+  screwsTall: 60,
+  screwartMinDepthMm: 0,
+  screwartMaxDepthMm: 12,
+  screwartInvert: false,
+  screwartDepthGrid: null,
+  screwartRenderedMinDepthMm: null,
+  screwartRenderedMaxDepthMm: null,
 };
 
 const brickSizeSelections = new Map(LEGO_BRICK_SIZES.map(([w, h]) => [`${w}x${h}`, true]));
@@ -262,7 +347,9 @@ const el = {
   classicPanel: $("classicPanel"), adaptivePanel: $("adaptivePanel"), dicePanel: $("dicePanel"),
   rubiksPanel: $("rubiksPanel"), metaPanel: $("metaPanel"), foundobjectPanel: $("foundobjectPanel"),
   radialPanel: $("radialPanel"), stainedglassPanel: $("stainedglassPanel"),
+  leadedglassPanel: $("leadedglassPanel"),
   lithophanePanel: $("lithophanePanel"), stringartPanel: $("stringartPanel"),
+  screwartPanel: $("screwartPanel"),
   colorSourceSeg: $("colorSourceSeg"), colorsLabel: $("colorsLabel"),
   numColors: $("numColors"), numColorsVal: $("numColorsVal"),
   fixedPaletteLabel: $("fixedPaletteLabel"), choosePaletteBtn: $("choosePaletteBtn"),
@@ -284,6 +371,8 @@ const el = {
   cubesWide: $("cubesWide"), cubesWideVal: $("cubesWideVal"),
   cubesTall: $("cubesTall"), cubesTallVal: $("cubesTallVal"),
   lockAspectRubiks: $("lockAspectRubiks"),
+  rubiksColorModeSeg: $("rubiksColorModeSeg"), rubiksBlackGroup: $("rubiksBlackGroup"),
+  rubiksIncludeBlack: $("rubiksIncludeBlack"),
   rubiksSizeEstimate: $("rubiksSizeEstimate"),
   rubiksGenerateBtn: $("rubiksGenerateBtn"), rubiksRecolorBtn: $("rubiksRecolorBtn"),
   exportRubiksGuideBtn: $("exportRubiksGuideBtn"), previewRubiksGuideBtn: $("previewRubiksGuideBtn"),
@@ -342,6 +431,30 @@ const el = {
   stainedglassGenerateBtn: $("stainedglassGenerateBtn"), stainedglassPrice: $("stainedglassPrice"),
   exportStainedglassCellsBtn: $("exportStainedglassCellsBtn"), previewStainedglassCellsBtn: $("previewStainedglassCellsBtn"),
   exportStainedglassShoppingBtn: $("exportStainedglassShoppingBtn"), previewStainedglassShoppingBtn: $("previewStainedglassShoppingBtn"),
+  leadedglassShapeSeg: $("leadedglassShapeSeg"), leadedglassStyleSeg: $("leadedglassStyleSeg"),
+  leadedglassLatticePanel: $("leadedglassLatticePanel"), leadedglassBoldPanel: $("leadedglassBoldPanel"),
+  leadedglassGridPanel: $("leadedglassGridPanel"),
+  leadedglassBodyWidth: $("leadedglassBodyWidth"), leadedglassBodyWidthVal: $("leadedglassBodyWidthVal"),
+  leadedglassSubjectPieces: $("leadedglassSubjectPieces"), leadedglassSubjectPiecesVal: $("leadedglassSubjectPiecesVal"),
+  leadedglassRings: $("leadedglassRings"), leadedglassRingsVal: $("leadedglassRingsVal"),
+  leadedglassWedges: $("leadedglassWedges"), leadedglassWedgesVal: $("leadedglassWedgesVal"),
+  leadedglassLatticeSeed: $("leadedglassLatticeSeed"), leadedglassLatticeNewLayoutBtn: $("leadedglassLatticeNewLayoutBtn"),
+  leadedglassBoldPieceCount: $("leadedglassBoldPieceCount"), leadedglassBoldPieceCountVal: $("leadedglassBoldPieceCountVal"),
+  leadedglassBoldSpacing: $("leadedglassBoldSpacing"), leadedglassBoldSpacingVal: $("leadedglassBoldSpacingVal"),
+  leadedglassBoldSeed: $("leadedglassBoldSeed"), leadedglassBoldNewLayoutBtn: $("leadedglassBoldNewLayoutBtn"),
+  leadedglassBorderEnabled: $("leadedglassBorderEnabled"),
+  leadedglassBorderColorBtn: $("leadedglassBorderColorBtn"), leadedglassBorderColorPicker: $("leadedglassBorderColorPicker"),
+  leadedglassBorderAccentBtn: $("leadedglassBorderAccentBtn"), leadedglassBorderAccentPicker: $("leadedglassBorderAccentPicker"),
+  leadedglassGridCols: $("leadedglassGridCols"), leadedglassGridColsVal: $("leadedglassGridColsVal"),
+  leadedglassGridCellSize: $("leadedglassGridCellSize"), leadedglassGridCellSizeVal: $("leadedglassGridCellSizeVal"),
+  leadedglassEstimate: $("leadedglassEstimate"),
+  leadedglassLeadWidth: $("leadedglassLeadWidth"), leadedglassLeadWidthVal: $("leadedglassLeadWidthVal"),
+  leadedglassLeadColorBtn: $("leadedglassLeadColorBtn"), leadedglassLeadColorPicker: $("leadedglassLeadColorPicker"),
+  leadedglassBgColorBtn: $("leadedglassBgColorBtn"), leadedglassBgColorPicker: $("leadedglassBgColorPicker"),
+  leadedglassNumColors: $("leadedglassNumColors"), leadedglassNumColorsVal: $("leadedglassNumColorsVal"),
+  leadedglassGenerateBtn: $("leadedglassGenerateBtn"), leadedglassPrice: $("leadedglassPrice"),
+  exportLeadedglassCellsBtn: $("exportLeadedglassCellsBtn"), previewLeadedglassCellsBtn: $("previewLeadedglassCellsBtn"),
+  exportLeadedglassShoppingBtn: $("exportLeadedglassShoppingBtn"), previewLeadedglassShoppingBtn: $("previewLeadedglassShoppingBtn"),
   lithophaneWidth: $("lithophaneWidth"), lithophaneHeight: $("lithophaneHeight"),
   lithophaneLockAspect: $("lithophaneLockAspect"),
   lithophaneDetail: $("lithophaneDetail"), lithophaneDetailVal: $("lithophaneDetailVal"),
@@ -349,6 +462,13 @@ const el = {
   lithophaneMinThickness: $("lithophaneMinThickness"), lithophaneMaxThickness: $("lithophaneMaxThickness"),
   lithophaneInvert: $("lithophaneInvert"), lithophaneGenerateBtn: $("lithophaneGenerateBtn"),
   exportLithophaneStlBtn: $("exportLithophaneStlBtn"),
+  screwsWide: $("screwsWide"), screwsWideVal: $("screwsWideVal"),
+  screwsTall: $("screwsTall"), screwsTallVal: $("screwsTallVal"),
+  screwartMinDepth: $("screwartMinDepth"), screwartMaxDepth: $("screwartMaxDepth"),
+  screwartInvert: $("screwartInvert"), screwartSizeEstimate: $("screwartSizeEstimate"),
+  screwartGenerateBtn: $("screwartGenerateBtn"),
+  previewScrewartGuideBtn: $("previewScrewartGuideBtn"), exportScrewartGuideBtn: $("exportScrewartGuideBtn"),
+  previewScrewartCsvBtn: $("previewScrewartCsvBtn"), exportScrewartCsvBtn: $("exportScrewartCsvBtn"),
   stringartShapeSeg: $("stringartShapeSeg"),
   stringartPins: $("stringartPins"), stringartPinsVal: $("stringartPinsVal"),
   stringartLines: $("stringartLines"), stringartLinesVal: $("stringartLinesVal"),
@@ -750,6 +870,10 @@ function applyLoadedImage(canvas, displayName) {
   state.rubiksGrid = null;
   state.rubiksBaseGrid = null;
   state.rubiksColorMap = {};
+  state.rubiksPalette = RUBIKS_PALETTE;
+  state.rubiksIncludeBlack = false;
+  el.rubiksIncludeBlack.checked = false;
+  setRubiksColorMode("nearest");
   state.crossStitchGrid = null;
   state.foundObjectQuantizedGrid = null;
   state.foundObjectPalette = null;
@@ -763,6 +887,10 @@ function applyLoadedImage(canvas, displayName) {
   state.stainedglassCanvasH = null;
   state.stainedglassActualCellCount = null;
   state.renderedStainedglassMinDist = null;
+  state.leadedglassQuantized = null;
+  state.leadedglassLayout = null;
+  state.renderedLeadedglassShape = null;
+  state.renderedLeadedglassStyle = null;
   state.lithophaneHeightmap = null;
   state.lithophaneSamplesW = null;
   state.lithophaneSamplesH = null;
@@ -774,6 +902,9 @@ function applyLoadedImage(canvas, displayName) {
   state.stringartNumPins = null;
   state.stringartFrameSize = null;
   state.stringartThreadLength = null;
+  state.screwartDepthGrid = null;
+  state.screwartRenderedMinDepthMm = null;
+  state.screwartRenderedMaxDepthMm = null;
   state.renderedMode = state.layoutMode;
   clearBrickLayout();
   disableGenerationDependentButtons();
@@ -786,8 +917,10 @@ function applyLoadedImage(canvas, displayName) {
   el.foundObjectGenerateBtn.disabled = false;
   el.radialGenerateBtn.disabled = false;
   el.stainedglassGenerateBtn.disabled = false;
+  el.leadedglassGenerateBtn.disabled = false;
   el.lithophaneGenerateBtn.disabled = false;
   el.stringartGenerateBtn.disabled = false;
+  el.screwartGenerateBtn.disabled = false;
   resetSampleDisplay();
 
   if (el.lockAspect.checked) syncHeightToAspect();
@@ -800,8 +933,10 @@ function applyLoadedImage(canvas, displayName) {
   updateRubiksSizeEstimate();
   updateRadialCellEstimate();
   updateStainedglassPieceEstimate();
+  updateLeadedglassEstimate();
   updateLithophaneEstimate();
   updateStringartEstimate();
+  updateScrewartSizeEstimate();
   setStatus("Image loaded. Adjust settings and click Generate.");
 }
 
@@ -1028,6 +1163,24 @@ function updateRubiksSizeEstimate() {
   updatePhysicalSizeEstimate();
 }
 
+function updateScrewartSizeEstimate() {
+  if (!el.screwartSizeEstimate || !el.screwsWide || !el.screwsTall) return;
+  const screwsWide = parseInt(el.screwsWide.value, 10);
+  const screwsTall = parseInt(el.screwsTall.value, 10);
+  const cellSize = parseInt(el.cellSize.value, 10);
+  const totalScrews = screwsWide * screwsTall;
+  // Screw Art's cells nearly fill the grid (no inter-block gap the way
+  // Rubik's 3x3 cube blocks have) -- see renderScrewartMosaic -- so the
+  // output size is just the plain grid x cellSize product.
+  const w = screwsWide * cellSize;
+  const h = screwsTall * cellSize;
+  const mp = (w * h) / 1e6;
+  el.screwartSizeEstimate.textContent =
+    `Output image: ~${w.toLocaleString()}\u00d7${h.toLocaleString()}px (${mp.toFixed(0)}MP) `
+    + `\u2022 ${totalScrews.toLocaleString()} screws total`;
+  updatePhysicalSizeEstimate();
+}
+
 /** Real-world size of the finished object, purely informational -- has no
  * effect on generation. The count basis depends on the current mode:
  * Rubik's Cube sizes itself in whole cubes (cubesWide x cubesTall); every
@@ -1086,6 +1239,17 @@ function updatePhysicalSizeEstimate() {
     return;
   }
 
+  if (state.layoutMode === "leadedglass") {
+    // Same reasoning as Radial: three very differently-shaped sub-modes
+    // (Voronoi spacing, diamond grid cells, an ellipse + sunburst) with no
+    // single width x height basis in common to size against the shared
+    // Piece Size field -- skip rather than reusing an unrelated pair of
+    // sliders for a misleading number. Mirrors mosaic_gui.py's
+    // MosaicApp._update_physical_size_estimate leadedglass branch exactly.
+    el.physicalSizeEstimate.textContent = "";
+    return;
+  }
+
   if (state.layoutMode === "stringart") {
     // A single continuous thread path around a frame, not a countW x
     // countH grid of pieces, so this shows the mode's own frame size plus
@@ -1138,6 +1302,10 @@ function updatePhysicalSizeEstimate() {
     countW = parseInt(el.cubesWide.value, 10);
     countH = parseInt(el.cubesTall.value, 10);
     pieceWord = "cube";
+  } else if (state.layoutMode === "screwart") {
+    countW = parseInt(el.screwsWide.value, 10);
+    countH = parseInt(el.screwsTall.value, 10);
+    pieceWord = "screw";
   } else {
     countW = parseInt(el.gridWidth.value, 10);
     countH = parseInt(el.gridHeight.value, 10);
@@ -1183,6 +1351,7 @@ el.cellSize.addEventListener("input", () => {
   updateSizeEstimate();
   updateRubiksSizeEstimate();
   updateStainedglassPieceEstimate();
+  updateScrewartSizeEstimate();
 });
 el.pieceSize.addEventListener("input", updatePhysicalSizeEstimate);
 el.pieceSizeUnit.addEventListener("change", updatePhysicalSizeEstimate);
@@ -1201,6 +1370,35 @@ el.cubesTall.addEventListener("input", () => {
 el.lockAspectRubiks.addEventListener("change", () => {
   if (el.lockAspectRubiks.checked && state.sourceCanvas) { syncCubesTallToAspect(); updateRubiksSizeEstimate(); }
 });
+
+el.screwsWide.addEventListener("input", () => {
+  el.screwsWideVal.textContent = el.screwsWide.value;
+  updateScrewartSizeEstimate();
+});
+el.screwsTall.addEventListener("input", () => {
+  el.screwsTallVal.textContent = el.screwsTall.value;
+  updateScrewartSizeEstimate();
+});
+el.screwartMinDepth.addEventListener("input", updatePhysicalSizeEstimate);
+el.screwartMaxDepth.addEventListener("input", updatePhysicalSizeEstimate);
+
+el.rubiksColorModeSeg.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-mode]");
+  if (!btn) return;
+  setRubiksColorMode(btn.dataset.mode);
+});
+
+// Factored out of the click handler above so importSettings() can drive the
+// same UI update programmatically, without synthesizing a click event.
+function setRubiksColorMode(mode) {
+  state.rubiksColorMode = mode;
+  [...el.rubiksColorModeSeg.children].forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+  // Include-black only applies to "nearest" -- in "ramp" the full
+  // brightness range (including a dark band) is already covered by the 6
+  // real stickers, so the checkbox and its hint are hidden rather than
+  // left showing but inert.
+  el.rubiksBlackGroup.hidden = mode === "ramp";
+}
 
 el.colorSourceSeg.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-mode]");
@@ -1300,6 +1498,38 @@ function rerenderCurrent(resetView = true) {
       state.stainedglassCanvasW, state.stainedglassCanvasH, state.renderedStainedglassMinDist,
       leadWidth, state.stainedglassLeadColor, makeCanvas);
     if (state.viewMode === "output") refreshPreview(resetView);
+  } else if (state.renderedMode === "leadedglass" && state.leadedglassQuantized) {
+    const leadWidth = parseInt(el.leadedglassLeadWidth.value, 10);
+    const layout = state.leadedglassLayout;
+    const shape = state.renderedLeadedglassShape;
+    if (state.renderedLeadedglassStyle === "bold_pieces") {
+      if (layout.borderWidth) {
+        // Cached geometry already has a border baked in (points are
+        // pre-offset into the outer canvas -- see generateLeadedglassMosaic);
+        // a came-width/color or border-color tweak can reuse it directly
+        // without redoing Poisson-disc placement.
+        state.outputCanvas = renderLeadedglassBoldPiecesWithBorder(
+          state.leadedglassQuantized, layout.points, layout.canvasW, layout.canvasH, layout.borderWidth,
+          state.leadedglassBorderColor, state.leadedglassBorderAccentColor, layout.borderSeed ?? 1,
+          leadWidth, state.leadedglassLeadColor, state.leadedglassBgColor, makeCanvas);
+      } else {
+        state.outputCanvas = renderLeadedglassBoldPieces(
+          state.leadedglassQuantized, layout.points, shape, layout.canvasW, layout.canvasH, layout.minDist,
+          leadWidth, state.leadedglassLeadColor, state.leadedglassBgColor, makeCanvas);
+      }
+    } else if (state.renderedLeadedglassStyle === "panel_grid") {
+      state.outputCanvas = renderLeadedglassPanelGrid(
+        state.leadedglassQuantized, shape, layout.canvasW, layout.canvasH, layout.cellSize,
+        layout.colMin, layout.colsN, layout.rowMin, layout.rowsN,
+        leadWidth, state.leadedglassLeadColor, state.leadedglassBgColor, makeCanvas);
+    } else {
+      state.outputCanvas = renderLeadedglassLattice(
+        state.leadedglassQuantized, shape, layout.canvasW, layout.canvasH,
+        layout.ecx, layout.ecy, layout.erx, layout.ery, layout.subjectPoints,
+        layout.rings, layout.baseSegments,
+        leadWidth, state.leadedglassLeadColor, state.leadedglassBgColor, makeCanvas);
+    }
+    if (state.viewMode === "output") refreshPreview(resetView);
   } else if (state.renderedMode === "stringart" && state.stringartCanvas) {
     state.outputCanvas = renderStringartPreview(
       state.stringartCanvas, state.stringartShape, STRINGART_WORKING_SIZE,
@@ -1337,19 +1567,22 @@ function setLayoutMode(mode) {
   el.foundobjectPanel.hidden = mode !== "foundobject";
   el.radialPanel.hidden = mode !== "radial";
   el.stainedglassPanel.hidden = mode !== "stainedglass";
+  el.leadedglassPanel.hidden = mode !== "leadedglass";
   el.lithophanePanel.hidden = mode !== "lithophane";
   el.stringartPanel.hidden = mode !== "stringart";
+  el.screwartPanel.hidden = mode !== "screwart";
   // Rubik's Cube mode sizes itself in cube units (cubesWide/cubesTall),
   // Radial mode in rings/base segments (radialRings/radialBaseSegments),
   // Stained Glass in a target piece count (stainedglassPieceCount),
-  // Lithophane in a physical width/height in mm plus a detail slider, and
-  // String Art in its own pin/line-count sliders plus a frame-size field,
-  // rather than the shared cell-based Grid width/height sliders every
-  // other mode uses -- hide those to avoid showing two unrelated size
-  // controls at once.
+  // the new leaded-glass Stained Glass mode in its own three sub-mode
+  // sliders, Lithophane in a physical width/height in mm plus a detail
+  // slider, and String Art in its own pin/line-count sliders plus a
+  // frame-size field, rather than the shared cell-based Grid width/height
+  // sliders every other mode uses -- hide those to avoid showing two
+  // unrelated size controls at once.
   el.sharedGridSizeControls.hidden =
     mode === "rubiks" || mode === "radial" || mode === "stainedglass" || mode === "lithophane"
-    || mode === "stringart";
+    || mode === "stringart" || mode === "leadedglass" || mode === "screwart";
   // Each mode's panel has a very different height (Classic's is long,
   // Cross-Stitch's is short, etc.), but they all share one scrolling
   // sidebar. Without this, the sidebar's scroll offset carries over
@@ -1795,6 +2028,10 @@ function disableGenerationDependentButtons() {
   el.previewStainedglassCellsBtn.disabled = true;
   el.exportStainedglassShoppingBtn.disabled = true;
   el.previewStainedglassShoppingBtn.disabled = true;
+  el.exportLeadedglassCellsBtn.disabled = true;
+  el.previewLeadedglassCellsBtn.disabled = true;
+  el.exportLeadedglassShoppingBtn.disabled = true;
+  el.previewLeadedglassShoppingBtn.disabled = true;
   el.exportLithophaneStlBtn.disabled = true;
   el.exportStringartGuideBtn.disabled = true;
   el.previewStringartGuideBtn.disabled = true;
@@ -1802,6 +2039,10 @@ function disableGenerationDependentButtons() {
   el.previewStringartSequenceBtn.disabled = true;
   el.exportStringartShoppingBtn.disabled = true;
   el.previewStringartShoppingBtn.disabled = true;
+  el.exportScrewartGuideBtn.disabled = true;
+  el.previewScrewartGuideBtn.disabled = true;
+  el.exportScrewartCsvBtn.disabled = true;
+  el.previewScrewartCsvBtn.disabled = true;
 }
 
 function clearBrickLayout() {
@@ -2106,6 +2347,421 @@ function exportStainedglassCells() {
 }
 
 // ---------------------------------------------------------------------------
+// Generate -- Leaded Glass (displayed as "Stained Glass"; see the leadedglass
+// state block's comment for why the internal name and display name differ).
+// Three orthogonal axes -- frame shape x generation style -- mirroring
+// mosaic_gui.py's Python GUI wiring exactly (_leadedglass_style_key/
+// _leadedglass_shape_key, _on_leadedglass_style_change/_on_leadedglass_
+// shape_change, _update_leadedglass_estimate, _on_generate_leadedglass).
+// No unified dispatcher here by design (unlike mosaic_core.py's
+// generate_leadedglass_mosaic) -- app.js orchestrates the three sub-modes'
+// generate/sample/render calls directly, the same way it already does for
+// every other mode's own generate function.
+// ---------------------------------------------------------------------------
+
+function leadedglassShapeKey() {
+  const btn = [...el.leadedglassShapeSeg.children].find(b => b.classList.contains("active"));
+  return btn ? btn.dataset.shape : "rect";
+}
+
+function leadedglassStyleKey() {
+  const btn = [...el.leadedglassStyleSeg.children].find(b => b.classList.contains("active"));
+  return btn ? btn.dataset.style : "lattice_subject";
+}
+
+el.leadedglassShapeSeg.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-shape]");
+  if (!btn) return;
+  [...el.leadedglassShapeSeg.children].forEach(b => b.classList.toggle("active", b === btn));
+  onLeadedglassShapeChange();
+  updateLeadedglassEstimate();
+});
+
+/** The decorative border is rectangle-only for now (see
+ * core/leadedglass.js's renderLeadedglassBoldPiecesWithBorder) -- force
+ * it off and disable the checkbox itself for any other frame shape, so
+ * the UI never offers a toggle that would silently do nothing. Mirrors
+ * mosaic_gui.py's _on_leadedglass_shape_change. */
+function onLeadedglassShapeChange() {
+  const isRect = leadedglassShapeKey() === "rect";
+  el.leadedglassBorderEnabled.disabled = !isRect;
+  if (!isRect && el.leadedglassBorderEnabled.checked) {
+    el.leadedglassBorderEnabled.checked = false;
+    onLeadedglassBorderToggle();
+  }
+}
+
+el.leadedglassStyleSeg.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-style]");
+  if (!btn) return;
+  [...el.leadedglassStyleSeg.children].forEach(b => b.classList.toggle("active", b === btn));
+  const style = btn.dataset.style;
+  el.leadedglassLatticePanel.hidden = style !== "lattice_subject";
+  el.leadedglassBoldPanel.hidden = style !== "bold_pieces";
+  el.leadedglassGridPanel.hidden = style !== "panel_grid";
+  updateLeadedglassEstimate();
+});
+
+function randomLeadedglassSeed() {
+  return Math.floor(Math.random() * 2147483647);
+}
+
+function getLeadedglassBoldSeed() {
+  const value = parseInt(el.leadedglassBoldSeed.value, 10);
+  if (Number.isFinite(value) && value >= 0) return value;
+  const newSeed = randomLeadedglassSeed();
+  el.leadedglassBoldSeed.value = String(newSeed);
+  return newSeed;
+}
+
+el.leadedglassBoldNewLayoutBtn.addEventListener("click", () => {
+  el.leadedglassBoldSeed.value = String(randomLeadedglassSeed());
+  if (state.sourceCanvas && state.layoutMode === "leadedglass" && leadedglassStyleKey() === "bold_pieces") {
+    generateLeadedglassMosaic();
+  }
+});
+
+function getLeadedglassLatticeSeed() {
+  const value = parseInt(el.leadedglassLatticeSeed.value, 10);
+  if (Number.isFinite(value) && value >= 0) return value;
+  const newSeed = randomLeadedglassSeed();
+  el.leadedglassLatticeSeed.value = String(newSeed);
+  return newSeed;
+}
+
+el.leadedglassLatticeNewLayoutBtn.addEventListener("click", () => {
+  el.leadedglassLatticeSeed.value = String(randomLeadedglassSeed());
+  if (state.sourceCanvas && state.layoutMode === "leadedglass" && leadedglassStyleKey() === "lattice_subject") {
+    generateLeadedglassMosaic();
+  }
+});
+
+el.leadedglassLeadColorBtn.addEventListener("click", () => el.leadedglassLeadColorPicker.click());
+el.leadedglassLeadColorPicker.addEventListener("input", () => {
+  state.leadedglassLeadColor = hexToRgb(el.leadedglassLeadColorPicker.value);
+  setSwatchButton(el.leadedglassLeadColorBtn, state.leadedglassLeadColor);
+  rerenderCurrent(false);
+});
+el.leadedglassBgColorBtn.addEventListener("click", () => el.leadedglassBgColorPicker.click());
+el.leadedglassBgColorPicker.addEventListener("input", () => {
+  state.leadedglassBgColor = hexToRgb(el.leadedglassBgColorPicker.value);
+  setSwatchButton(el.leadedglassBgColorBtn, state.leadedglassBgColor);
+  rerenderCurrent(false);
+});
+el.leadedglassLeadWidth.addEventListener("input", () => {
+  el.leadedglassLeadWidthVal.textContent = el.leadedglassLeadWidth.value;
+  // Came width only affects *rendering* (the boundary-dilation pass), not
+  // which pixels belong to which piece -- same cheap-re-render reasoning
+  // as Tile Mosaic's own lead-width slider.
+  rerenderCurrent(false);
+});
+
+/** Checking/unchecking changes the canvas geometry (the picture shrinks
+ * to make room for the border band, or grows back to fill it), so --
+ * like the piece-count/spacing sliders -- this doesn't re-render on its
+ * own; it takes effect on the next "Generate Mosaic" click. Only the two
+ * color swatches enable/disable here. Mirrors mosaic_gui.py's
+ * _on_leadedglass_border_toggle. */
+function onLeadedglassBorderToggle() {
+  state.leadedglassBorderEnabled = el.leadedglassBorderEnabled.checked;
+  el.leadedglassBorderColorBtn.disabled = !state.leadedglassBorderEnabled;
+  el.leadedglassBorderAccentBtn.disabled = !state.leadedglassBorderEnabled;
+}
+el.leadedglassBorderEnabled.addEventListener("change", onLeadedglassBorderToggle);
+
+el.leadedglassBorderColorBtn.addEventListener("click", () => el.leadedglassBorderColorPicker.click());
+el.leadedglassBorderColorPicker.addEventListener("input", () => {
+  state.leadedglassBorderColor = hexToRgb(el.leadedglassBorderColorPicker.value);
+  setSwatchButton(el.leadedglassBorderColorBtn, state.leadedglassBorderColor);
+  rerenderCurrent(false);
+});
+el.leadedglassBorderAccentBtn.addEventListener("click", () => el.leadedglassBorderAccentPicker.click());
+el.leadedglassBorderAccentPicker.addEventListener("input", () => {
+  state.leadedglassBorderAccentColor = hexToRgb(el.leadedglassBorderAccentPicker.value);
+  setSwatchButton(el.leadedglassBorderAccentBtn, state.leadedglassBorderAccentColor);
+  rerenderCurrent(false);
+});
+el.leadedglassNumColors.addEventListener("input", () => {
+  el.leadedglassNumColorsVal.textContent = el.leadedglassNumColors.value;
+});
+
+for (const [slider, valEl] of [
+  [el.leadedglassBodyWidth, el.leadedglassBodyWidthVal],
+  [el.leadedglassSubjectPieces, el.leadedglassSubjectPiecesVal],
+  [el.leadedglassRings, el.leadedglassRingsVal],
+  [el.leadedglassWedges, el.leadedglassWedgesVal],
+  [el.leadedglassBoldPieceCount, el.leadedglassBoldPieceCountVal],
+  [el.leadedglassBoldSpacing, el.leadedglassBoldSpacingVal],
+  [el.leadedglassGridCols, el.leadedglassGridColsVal],
+  [el.leadedglassGridCellSize, el.leadedglassGridCellSizeVal],
+]) {
+  slider.addEventListener("input", () => {
+    valEl.textContent = slider.value;
+    updateLeadedglassEstimate();
+  });
+}
+
+/** Live piece-count hint below the sub-mode's own sliders, mirroring
+ * mosaic_gui.py's MosaicApp._update_leadedglass_estimate -- the estimate
+ * basis differs entirely by style, same as the generate function itself. */
+function updateLeadedglassEstimate() {
+  if (!el.leadedglassEstimate || !el.leadedglassStyleSeg || !el.leadedglassShapeSeg) return;
+  const style = leadedglassStyleKey();
+
+  if (style === "bold_pieces") {
+    const count = parseInt(el.leadedglassBoldPieceCount.value, 10);
+    const minDist = parseFloat(el.leadedglassBoldSpacing.value);
+    const est = state.sourceCanvas
+      ? estimateLeadedglassBoldPieceCount(state.sourceCanvas.width, state.sourceCanvas.height, count, minDist)
+      : count;
+    let text = `≈ ${est.toLocaleString()} pieces at this spacing`;
+    if (count > LEADEDGLASS_MAX_CELLS) {
+      text += ` — over the ${LEADEDGLASS_MAX_CELLS.toLocaleString()} limit, reduce piece count`;
+    }
+    el.leadedglassEstimate.textContent = text;
+  } else if (style === "panel_grid") {
+    const cols = parseInt(el.leadedglassGridCols.value, 10);
+    const cell = parseFloat(el.leadedglassGridCellSize.value);
+    if (state.sourceCanvas) {
+      const shape = leadedglassShapeKey();
+      const [canvasW, canvasH] = leadedglassPanelGridCanvasSize(
+        state.sourceCanvas.width, state.sourceCanvas.height, shape, cols, cell);
+      const [, colsN, , rowsN] = leadedglassDiamondGridBounds(cell, canvasW, canvasH);
+      const total = colsN * rowsN;
+      let text = `${colsN}×${rowsN} = ${total.toLocaleString()} diamond panes (${canvasW}×${canvasH}px canvas)`;
+      if (total > LEADEDGLASS_MAX_CELLS) {
+        text += ` — over the ${LEADEDGLASS_MAX_CELLS.toLocaleString()} limit, reduce the grid density`;
+      }
+      el.leadedglassEstimate.textContent = text;
+    } else {
+      el.leadedglassEstimate.textContent = "Load an image to see the exact grid size.";
+    }
+  } else {
+    const subject = parseInt(el.leadedglassSubjectPieces.value, 10);
+    const rings = parseInt(el.leadedglassRings.value, 10);
+    const wedges = parseInt(el.leadedglassWedges.value, 10);
+    const total = estimateLeadedglassLatticePieceCount(subject, rings, wedges);
+    let text = `≈ ${total.toLocaleString()} pieces total (${subject} subject + ${total - subject} sunburst)`;
+    if (total > LEADEDGLASS_MAX_CELLS) {
+      text += ` — over the ${LEADEDGLASS_MAX_CELLS.toLocaleString()} limit, reduce piece/ring/wedge counts`;
+    }
+    el.leadedglassEstimate.textContent = text;
+  }
+}
+
+el.leadedglassGenerateBtn.addEventListener("click", generateLeadedglassMosaic);
+
+async function generateLeadedglassMosaic() {
+  if (!state.sourceCanvas) { setStatus("Load an image first."); return; }
+
+  const shape = leadedglassShapeKey();
+  const style = leadedglassStyleKey();
+  const numColors = parseInt(el.leadedglassNumColors.value, 10) || null;
+  const leadWidth = parseInt(el.leadedglassLeadWidth.value, 10);
+  const leadColor = state.leadedglassLeadColor;
+  const bgColor = state.leadedglassBgColor;
+
+  if (style === "bold_pieces") {
+    const targetCount = parseInt(el.leadedglassBoldPieceCount.value, 10);
+    if (targetCount > LEADEDGLASS_MAX_CELLS) {
+      setStatus(`That's a target of ${targetCount.toLocaleString()} pieces -- reduce the piece count ` +
+        `to bring it under ${LEADEDGLASS_MAX_CELLS.toLocaleString()}.`);
+      return;
+    }
+  } else if (style === "lattice_subject") {
+    const subjectCount = parseInt(el.leadedglassSubjectPieces.value, 10);
+    const rings = parseInt(el.leadedglassRings.value, 10);
+    const wedges = parseInt(el.leadedglassWedges.value, 10);
+    const total = estimateLeadedglassLatticePieceCount(subjectCount, rings, wedges);
+    if (total > LEADEDGLASS_MAX_CELLS) {
+      setStatus(`That's ${total.toLocaleString()} pieces total -- reduce the subject piece count, rings, ` +
+        `or wedges to bring it under ${LEADEDGLASS_MAX_CELLS.toLocaleString()}.`);
+      return;
+    }
+  }
+
+  el.leadedglassGenerateBtn.disabled = true;
+  el.leadedglassGenerateBtn.textContent = "Generating...";
+  setStatus("Building the panel, this can take a few seconds...");
+
+  try {
+    let canvasW, canvasH, colors, layout;
+
+    if (style === "bold_pieces") {
+      const targetCount = parseInt(el.leadedglassBoldPieceCount.value, 10);
+      const minDist = parseFloat(el.leadedglassBoldSpacing.value);
+      const seed = getLeadedglassBoldSeed();
+      const result = generateLeadedglassBoldPieces(state.sourceCanvas, shape, targetCount, minDist, seed);
+      canvasW = result.canvasW; canvasH = result.canvasH; colors = result.colors;
+      let points = result.points;
+
+      const useBorder = shape === "rect" && state.leadedglassBorderEnabled;
+      if (useBorder) {
+        const bw = leadedglassBorderWidth(canvasW, canvasH);
+        const outerW = canvasW + 2 * bw, outerH = canvasH + 2 * bw;
+        // Offset points into the bigger outer (bordered) canvas first --
+        // renderLeadedglassBoldPiecesWithBorder expects points already in
+        // outer-canvas coordinates, and this same offset list is what gets
+        // cached in layout.points below, so the cheap re-render path
+        // (came-line width/color/border-color tweaks without regenerating
+        // geometry, see rerenderCurrent) can hand it straight back in.
+        points = points.map(([x, y]) => [x + bw, y + bw]);
+        canvasW = outerW; canvasH = outerH;
+        layout = { kind: "bold_pieces", points, canvasW, canvasH, minDist,
+          borderWidth: bw, borderColor: state.leadedglassBorderColor,
+          borderAccentColor: state.leadedglassBorderAccentColor, borderSeed: seed };
+      } else {
+        layout = { kind: "bold_pieces", points, canvasW, canvasH, minDist };
+      }
+    } else if (style === "panel_grid") {
+      const cols = parseInt(el.leadedglassGridCols.value, 10);
+      const cellSize = parseFloat(el.leadedglassGridCellSize.value);
+      [canvasW, canvasH] = leadedglassPanelGridCanvasSize(
+        state.sourceCanvas.width, state.sourceCanvas.height, shape, cols, cellSize);
+      const [colMin, colsN, rowMin, rowsN] = leadedglassDiamondGridBounds(cellSize, canvasW, canvasH);
+      if (colsN * rowsN > LEADEDGLASS_MAX_CELLS) {
+        setStatus(`That's a ${colsN}×${rowsN} grid (${(colsN * rowsN).toLocaleString()} panes) -- reduce ` +
+          `the grid density to bring it under ${LEADEDGLASS_MAX_CELLS.toLocaleString()}.`);
+        return;
+      }
+      colors = sampleLeadedglassPanelGridColors(state.sourceCanvas, canvasW, canvasH, cellSize,
+        colMin, colsN, rowMin, rowsN);
+      layout = { kind: "panel_grid", canvasW, canvasH, cellSize, colMin, colsN, rowMin, rowsN };
+    } else {
+      const bodyW = parseInt(el.leadedglassBodyWidth.value, 10);
+      const subjectCount = parseInt(el.leadedglassSubjectPieces.value, 10);
+      const rings = parseInt(el.leadedglassRings.value, 10);
+      const baseSegments = parseInt(el.leadedglassWedges.value, 10);
+      const seed = getLeadedglassLatticeSeed();
+      const result = generateLeadedglassLatticeSubject(
+        state.sourceCanvas, shape, bodyW, subjectCount, seed, rings, baseSegments);
+      canvasW = result.canvasW; canvasH = result.canvasH; colors = result.colors;
+      layout = { kind: "lattice_subject", canvasW, canvasH,
+        ecx: result.ecx, ecy: result.ecy, erx: result.erx, ery: result.ery,
+        subjectPoints: result.subjectPoints, rings, baseSegments };
+    }
+
+    // Unlike Tile Mosaic/Radial (which *want* a small shared palette --
+    // that's what makes their output a buildable set of physical tiles),
+    // Leaded Glass pieces are meant to read as individually mixed stained
+    // glass, so "no explicit color count" means "keep each piece's own
+    // sampled color" rather than auto-picking a tiny shared palette the
+    // way quantize-auto's k=null/0 behaves for every other mode. An
+    // explicit numColors still goes through the normal K-Means worker
+    // path unchanged. Mirrors mosaic_core.py's quantize_leadedglass_colors.
+    let palette, quantized, chosenN;
+    if (!numColors || numColors <= 0) {
+      const result = quantizeLeadedglassColorsDefault(colors);
+      quantized = result.flat;
+      palette = result.palette;
+      chosenN = result.chosenN;
+    } else {
+      const quantResult = await callWorker("quantize-auto", { points: colors, nColors: numColors });
+      palette = quantResult.palette;
+      quantized = Array.from(quantResult.labels).map(l => palette[l]);
+      chosenN = quantResult.chosenK;
+    }
+
+    let outputCanvas;
+    if (style === "bold_pieces") {
+      if (layout.borderWidth) {
+        outputCanvas = renderLeadedglassBoldPiecesWithBorder(
+          quantized, layout.points, canvasW, canvasH, layout.borderWidth,
+          layout.borderColor, layout.borderAccentColor, layout.borderSeed,
+          leadWidth, leadColor, bgColor, makeCanvas);
+      } else {
+        outputCanvas = renderLeadedglassBoldPieces(
+          quantized, layout.points, shape, canvasW, canvasH, layout.minDist,
+          leadWidth, leadColor, bgColor, makeCanvas);
+      }
+    } else if (style === "panel_grid") {
+      outputCanvas = renderLeadedglassPanelGrid(
+        quantized, shape, canvasW, canvasH, layout.cellSize,
+        layout.colMin, layout.colsN, layout.rowMin, layout.rowsN,
+        leadWidth, leadColor, bgColor, makeCanvas);
+    } else {
+      outputCanvas = renderLeadedglassLattice(
+        quantized, shape, canvasW, canvasH, layout.ecx, layout.ecy, layout.erx, layout.ery,
+        layout.subjectPoints, layout.rings, layout.baseSegments,
+        leadWidth, leadColor, bgColor, makeCanvas);
+    }
+
+    state.leadedglassQuantized = quantized;
+    state.leadedglassLayout = layout;
+    state.renderedLeadedglassShape = shape;
+    state.renderedLeadedglassStyle = style;
+    state.palette = palette;
+    state.colorNames = palette.map(() => "");
+    state.renderedMode = "leadedglass";
+    // Nominal "pieces across/down" grid, same trick Tile Mosaic/Radial use,
+    // so Poster export's DPI derivation (via posterGridCounts) has
+    // something to divide by -- based on a flat 40px nominal spacing
+    // regardless of sub-mode, since no single spacing constant fits all
+    // three. The physical-size estimate itself is skipped entirely for
+    // this mode (see updatePhysicalSizeEstimate), so this nominal grid
+    // only feeds Poster export, not anything the user reads as a real
+    // measurement. Mirrors mosaic_gui.py's _generate_leadedglass_done.
+    const nominalSpacing = 40;
+    state.renderedGridW = Math.max(1, Math.round(canvasW / nominalSpacing));
+    state.renderedGridH = Math.max(1, Math.round(canvasH / nominalSpacing));
+    state.outputCanvas = outputCanvas;
+    resetSampleDisplay();
+
+    el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
+    el.exportPosterBtn.disabled = false;
+    el.previewPosterBtn.disabled = false;
+    el.exportLeadedglassCellsBtn.disabled = false;
+    el.previewLeadedglassCellsBtn.disabled = false;
+    el.exportLeadedglassShoppingBtn.disabled = false;
+    el.previewLeadedglassShoppingBtn.disabled = false;
+    clearBrickLayout();
+
+    setViewMode("output");
+    updatePhysicalSizeEstimate();
+    setStatus(`Done — ${chosenN} colors, ${quantized.length} pieces (${canvasW}×${canvasH}px canvas).`);
+    await snapshotRecentProject();
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    el.leadedglassGenerateBtn.disabled = false;
+    el.leadedglassGenerateBtn.textContent = "Generate Mosaic";
+  }
+}
+
+/** Adapts state.leadedglassLayout's render-oriented field names (colMin/
+ * colsN/rowMin/rowsN for panel_grid) to buildLeadedglassCellsJson's
+ * export-oriented ones (cols/rows) -- see that function's own doc comment
+ * for the three layout.kind shapes it expects. bold_pieces and
+ * lattice_subject already match field-for-field, so this only remaps
+ * panel_grid. */
+function leadedglassExportLayout() {
+  const layout = state.leadedglassLayout;
+  if (layout.kind === "panel_grid") {
+    return { kind: "panel_grid", canvasW: layout.canvasW, canvasH: layout.canvasH,
+      cols: layout.colsN, rows: layout.rowsN };
+  }
+  return layout;
+}
+
+el.exportLeadedglassCellsBtn.addEventListener("click", exportLeadedglassCells);
+el.previewLeadedglassCellsBtn.addEventListener("click", () => {
+  if (!state.leadedglassQuantized) return;
+  const json = buildLeadedglassCellsJson(state.leadedglassQuantized, leadedglassExportLayout(),
+    state.renderedLeadedglassShape, state.renderedLeadedglassStyle, { sourceName: state.sourceFileName });
+  openTextExportPreviewDialog("Preview: Cell List (JSON)", json, exportLeadedglassCells);
+});
+
+function exportLeadedglassCells() {
+  if (!state.leadedglassQuantized) return;
+  const json = buildLeadedglassCellsJson(state.leadedglassQuantized, leadedglassExportLayout(),
+    state.renderedLeadedglassShape, state.renderedLeadedglassStyle, { sourceName: state.sourceFileName });
+  downloadText(json, "leadedglass_cells.json", "application/json");
+  setStatus("Saved leadedglass_cells.json");
+}
+
+// ---------------------------------------------------------------------------
 // Generate -- Lithophane (classic single-material, exported as a real STL)
 // ---------------------------------------------------------------------------
 // Deliberately no cheap re-render path (unlike Stained Glass's lead-width/
@@ -2191,6 +2847,134 @@ function exportLithophaneStl() {
     state.lithophaneRenderedWidthMm, state.lithophaneRenderedHeightMm);
   downloadBlob(new Blob([stlBuffer], { type: "model/stl" }), "lithophane.stl");
   setStatus("Saved lithophane.stl");
+}
+
+// ---------------------------------------------------------------------------
+// Generate -- Screw Art (a grid of screws driven to varying depths into a
+// wood panel; sizes itself in "screws wide/tall" like Rubik's Cube's own
+// cube-unit sliders, so Poster export is enabled the same way Rubik's own
+// is -- see posterGridCounts, which falls through to the default
+// renderedGridW/renderedGridH branch for this mode, same as every non-
+// Rubik's grid-based mode.)
+// ---------------------------------------------------------------------------
+
+el.screwartGenerateBtn.addEventListener("click", generateScrewartMosaic);
+
+function getScrewartFloat(inputEl, defaultVal) {
+  const value = parseFloat(inputEl.value);
+  return Number.isFinite(value) && value > 0 ? value : defaultVal;
+}
+
+async function generateScrewartMosaic() {
+  if (!state.sourceCanvas) { setStatus("Load an image first."); return; }
+
+  const screwsWide = parseInt(el.screwsWide.value, 10);
+  const screwsTall = parseInt(el.screwsTall.value, 10);
+  const cellSize = parseInt(el.cellSize.value, 10);
+  const minDepth = getScrewartFloat(el.screwartMinDepth, 0);
+  const maxDepth = getScrewartFloat(el.screwartMaxDepth, 12);
+  const invert = el.screwartInvert.checked;
+
+  if (maxDepth <= minDepth) {
+    setStatus("Max depth must be greater than min depth.");
+    return;
+  }
+
+  el.screwartGenerateBtn.disabled = true;
+  el.screwartGenerateBtn.textContent = "Generating...";
+  setStatus("Sampling screw depths, this can take a few seconds for larger grids...");
+
+  try {
+    const depthGrid = sampleScrewartDepthGrid(
+      state.sourceCanvas, screwsWide, screwsTall, minDepth, maxDepth, invert);
+    const outputCanvas = renderScrewartMosaic(
+      depthGrid, screwsWide, screwsTall, minDepth, maxDepth, cellSize, makeCanvas);
+
+    state.screwartDepthGrid = depthGrid;
+    state.screwartRenderedMinDepthMm = minDepth;
+    state.screwartRenderedMaxDepthMm = maxDepth;
+    state.palette = null;
+    state.colorNames = [];
+    state.renderedMode = "screwart";
+    state.renderedCellSize = cellSize;
+    state.renderedGridW = screwsWide;
+    state.renderedGridH = screwsTall;
+    state.outputCanvas = outputCanvas;
+    resetSampleDisplay();
+
+    el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
+    el.exportPosterBtn.disabled = false;
+    el.previewPosterBtn.disabled = false;
+    el.exportScrewartGuideBtn.disabled = false;
+    el.previewScrewartGuideBtn.disabled = false;
+    el.exportScrewartCsvBtn.disabled = false;
+    el.previewScrewartCsvBtn.disabled = false;
+    clearBrickLayout();
+
+    setViewMode("output");
+    setStatus(`Done — ${screwsWide}×${screwsTall} screws (${(screwsWide * screwsTall).toLocaleString()} total).`);
+    await snapshotRecentProject();
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    el.screwartGenerateBtn.disabled = false;
+    el.screwartGenerateBtn.textContent = "Generate Mosaic";
+  }
+}
+
+el.exportScrewartGuideBtn.addEventListener("click", exportScrewartBuildGuide);
+el.previewScrewartGuideBtn.addEventListener("click", () => {
+  if (!state.screwartDepthGrid) return;
+  try {
+    const { renderedGridW: screwsWide, renderedGridH: screwsTall, renderedCellSize: cellSize,
+      screwartRenderedMinDepthMm: minDepth, screwartRenderedMaxDepthMm: maxDepth } = state;
+    const page1 = renderScrewartBuildSheet(state.screwartDepthGrid, screwsWide, screwsTall, cellSize, makeCanvas);
+    const page2 = renderScrewartInfoPage(state.screwartDepthGrid, screwsWide, screwsTall, minDepth, maxDepth, makeCanvas);
+    openPdfExportPreviewDialog("Preview: Screw Art Build Guide (PDF)", [page1, page2], exportScrewartBuildGuide);
+  } catch (err) {
+    setStatus(`Error building Screw Art build guide preview: ${err.message}`);
+    console.error(err);
+  }
+});
+
+function exportScrewartBuildGuide() {
+  if (!state.screwartDepthGrid) return;
+  try {
+    const { renderedGridW: screwsWide, renderedGridH: screwsTall, renderedCellSize: cellSize,
+      screwartRenderedMinDepthMm: minDepth, screwartRenderedMaxDepthMm: maxDepth } = state;
+    const page1 = renderScrewartBuildSheet(state.screwartDepthGrid, screwsWide, screwsTall, cellSize, makeCanvas);
+    const page2 = renderScrewartInfoPage(state.screwartDepthGrid, screwsWide, screwsTall, minDepth, maxDepth, makeCanvas);
+
+    const doc = new jspdf.jsPDF({
+      unit: "px",
+      format: [page1.width, page1.height],
+      orientation: page1.width >= page1.height ? "landscape" : "portrait",
+    });
+    doc.addImage(page1.toDataURL("image/png"), "PNG", 0, 0, page1.width, page1.height);
+    doc.addPage([page2.width, page2.height], page2.width >= page2.height ? "landscape" : "portrait");
+    doc.addImage(page2.toDataURL("image/png"), "PNG", 0, 0, page2.width, page2.height);
+    doc.save("screw_art_build_guide.pdf");
+    setStatus("Saved screw_art_build_guide.pdf (2 pages)");
+  } catch (err) {
+    setStatus(`Error building Screw Art build guide PDF: ${err.message}`);
+    console.error(err);
+  }
+}
+
+el.exportScrewartCsvBtn.addEventListener("click", exportScrewartDepthCsv);
+el.previewScrewartCsvBtn.addEventListener("click", () => {
+  if (!state.screwartDepthGrid) return;
+  const csv = buildScrewartDepthCsv(state.screwartDepthGrid, state.renderedGridW, state.renderedGridH);
+  openTextExportPreviewDialog("Preview: Screw Art Depth List (CSV)", csv, exportScrewartDepthCsv);
+});
+
+function exportScrewartDepthCsv() {
+  if (!state.screwartDepthGrid) return;
+  const csv = buildScrewartDepthCsv(state.screwartDepthGrid, state.renderedGridW, state.renderedGridH);
+  downloadText(csv, "screw_art_depth_list.csv", "text/csv");
+  setStatus("Saved screw_art_depth_list.csv");
 }
 
 // ---------------------------------------------------------------------------
@@ -2366,6 +3150,21 @@ function exportStainedglassShoppingList() {
   setStatus("Saved stainedglass_shopping_list.csv");
 }
 
+el.exportLeadedglassShoppingBtn.addEventListener("click", exportLeadedglassShoppingList);
+el.previewLeadedglassShoppingBtn.addEventListener("click", () => {
+  if (!state.leadedglassQuantized) return;
+  openTextExportPreviewDialog("Preview: Color Shopping List (CSV)",
+    buildPaletteCsv(state.leadedglassQuantized, state.palette, state.colorNames, getPrice(el.leadedglassPrice)),
+    exportLeadedglassShoppingList);
+});
+
+function exportLeadedglassShoppingList() {
+  if (!state.leadedglassQuantized) return;
+  const csv = buildPaletteCsv(state.leadedglassQuantized, state.palette, state.colorNames, getPrice(el.leadedglassPrice));
+  downloadText(csv, "leadedglass_shopping_list.csv", "text/csv");
+  setStatus("Saved leadedglass_shopping_list.csv");
+}
+
 // ---------------------------------------------------------------------------
 // Generate -- Dice (grayscale + Floyd-Steinberg dither to pip counts)
 // ---------------------------------------------------------------------------
@@ -2494,6 +3293,11 @@ async function generateRubiksMosaic() {
   const gridW = cubesWide * 3;
   const gridH = cubesTall * 3;
   const cellSize = parseInt(el.cellSize.value, 10);
+  const colorMode = state.rubiksColorMode;
+  // includeBlack only applies to "nearest" -- force it off for "ramp"
+  // regardless of the (possibly stale/hidden) checkbox value, so the two
+  // options can never silently combine.
+  const includeBlack = colorMode === "nearest" ? el.rubiksIncludeBlack.checked : false;
 
   el.rubiksGenerateBtn.disabled = true;
   el.rubiksGenerateBtn.textContent = "Generating...";
@@ -2501,14 +3305,24 @@ async function generateRubiksMosaic() {
 
   try {
     const grid = imageToGrid(state.sourceCanvas, gridW, gridH);
-    const result = await callWorker("quantize-fixed", { points: grid, palette: RUBIKS_PALETTE });
-    const quantizedFlat = Array.from(result.labels).map(l => RUBIKS_PALETTE[l]);
+    let quantizedFlat, activePalette;
+    if (colorMode === "ramp") {
+      activePalette = RUBIKS_LUMA_ORDER.map(c => c.rgb);
+      quantizedFlat = quantizeGridLumaRanked(grid, RUBIKS_LUMA_ORDER);
+    } else {
+      ({ palette: activePalette } = rubiksActivePalette(includeBlack));
+      const result = await callWorker("quantize-fixed", { points: grid, palette: activePalette });
+      quantizedFlat = Array.from(result.labels).map(l => activePalette[l]);
+    }
     const outputCanvas = renderRubiksMosaic(quantizedFlat, gridW, gridH, cellSize, makeCanvas,
       { bgColor: state.bgColor });
 
     state.rubiksBaseGrid = quantizedFlat;
     state.rubiksColorMap = {};
     state.rubiksGrid = quantizedFlat;
+    state.rubiksPalette = activePalette;
+    state.rubiksIncludeBlack = includeBlack;
+    state.rubiksColorMode = colorMode;
     state.renderedMode = "rubiks";
     state.renderedCellSize = cellSize;
     state.renderedGridW = gridW;
@@ -2545,7 +3359,7 @@ el.previewRubiksGuideBtn.addEventListener("click", () => {
   try {
     const { renderedGridW: gridW, renderedGridH: gridH, renderedCellSize: cellSize } = state;
     const page1 = renderRubiksBuildSheet(state.rubiksGrid, gridW, gridH, cellSize, makeCanvas);
-    const page2 = renderRubiksKey(state.rubiksGrid, RUBIKS_PALETTE, gridW, gridH, makeCanvas);
+    const page2 = renderRubiksKey(state.rubiksGrid, state.rubiksPalette, gridW, gridH, makeCanvas);
     openPdfExportPreviewDialog("Preview: Cube Build Guide (PDF)", [page1, page2], exportRubiksBuildGuide);
   } catch (err) {
     setStatus(`Error building Rubik's Cube build guide preview: ${err.message}`);
@@ -2558,7 +3372,7 @@ function exportRubiksBuildGuide() {
   try {
     const { renderedGridW: gridW, renderedGridH: gridH, renderedCellSize: cellSize } = state;
     const page1 = renderRubiksBuildSheet(state.rubiksGrid, gridW, gridH, cellSize, makeCanvas);
-    const page2 = renderRubiksKey(state.rubiksGrid, RUBIKS_PALETTE, gridW, gridH, makeCanvas);
+    const page2 = renderRubiksKey(state.rubiksGrid, state.rubiksPalette, gridW, gridH, makeCanvas);
 
     const doc = new jspdf.jsPDF({
       unit: "px",
@@ -2579,14 +3393,14 @@ function exportRubiksBuildGuide() {
 el.exportRubiksShoppingBtn.addEventListener("click", exportRubiksShoppingList);
 el.previewRubiksShoppingBtn.addEventListener("click", () => {
   if (!state.rubiksGrid) return;
-  const csv = buildRubiksShoppingListCsv(state.rubiksGrid, RUBIKS_PALETTE, state.renderedGridW, state.renderedGridH,
+  const csv = buildRubiksShoppingListCsv(state.rubiksGrid, state.rubiksPalette, state.renderedGridW, state.renderedGridH,
     getPrice(el.rubiksPrice));
   openTextExportPreviewDialog("Preview: Cube Shopping List (CSV)", csv, exportRubiksShoppingList);
 });
 
 function exportRubiksShoppingList() {
   if (!state.rubiksGrid) return;
-  const csv = buildRubiksShoppingListCsv(state.rubiksGrid, RUBIKS_PALETTE, state.renderedGridW, state.renderedGridH,
+  const csv = buildRubiksShoppingListCsv(state.rubiksGrid, state.rubiksPalette, state.renderedGridW, state.renderedGridH,
     getPrice(el.rubiksPrice));
   downloadText(csv, "rubiks_cube_shopping_list.csv", "text/csv");
   setStatus("Saved rubiks_cube_shopping_list.csv");
@@ -2604,7 +3418,15 @@ function openRubiksRecolorDialog() {
   if (!state.rubiksBaseGrid) return;
   const body = document.createElement("div");
 
-  for (const { name, rgb } of RUBIKS_CUBE_COLORS) {
+  // Offer the cube-body "black" tile as a 7th row/destination only when
+  // the last Generate actually used it (see state.rubiksIncludeBlack) --
+  // otherwise the grid has no black cells to remap and offering it as a
+  // destination would just be a confusing dead end.
+  const colors = state.rubiksIncludeBlack
+    ? [...RUBIKS_CUBE_COLORS, { name: RUBIKS_BLACK_NAME, rgb: RUBIKS_BLACK_RGB }]
+    : RUBIKS_CUBE_COLORS;
+
+  for (const { name, rgb } of colors) {
     const row = document.createElement("div");
     row.className = "swatch-row";
 
@@ -2615,20 +3437,23 @@ function openRubiksRecolorDialog() {
 
     const label = document.createElement("span");
     label.className = "recolor-label";
-    label.textContent = name;
+    // "Black (cube body)" is too long for this narrow label -- show plain
+    // "Black" here (the full name still appears in the dropdown options
+    // below, and is still the real key used in state.rubiksColorMap).
+    label.textContent = name === RUBIKS_BLACK_NAME ? "Black" : name;
 
     const select = document.createElement("select");
-    for (const opt of RUBIKS_CUBE_COLORS) {
+    for (const opt of colors) {
       const optionEl = document.createElement("option");
       optionEl.value = opt.name;
       optionEl.textContent = opt.name;
       select.appendChild(optionEl);
     }
     const currentRgb = state.rubiksColorMap[name] || rgb;
-    const currentMatch = RUBIKS_CUBE_COLORS.find(c => rgbToHex(c.rgb) === rgbToHex(currentRgb));
+    const currentMatch = colors.find(c => rgbToHex(c.rgb) === rgbToHex(currentRgb));
     select.value = currentMatch ? currentMatch.name : name;
     select.addEventListener("change", () => {
-      const chosen = RUBIKS_CUBE_COLORS.find(c => c.name === select.value);
+      const chosen = colors.find(c => c.name === select.value);
       state.rubiksColorMap[name] = chosen.rgb;
       applyRubiksRecolor();
     });
@@ -4325,6 +5150,7 @@ function generateForCurrentMode() {
     case "stainedglass": return generateStainedglassMosaic();
     case "lithophane": return generateLithophaneMosaic();
     case "stringart": return generateStringartMosaic();
+    case "screwart": return generateScrewartMosaic();
     default: return generateMosaic();
   }
 }
@@ -4446,6 +5272,8 @@ function collectSettings() {
       cubesWide: parseInt(el.cubesWide.value, 10),
       cubesTall: parseInt(el.cubesTall.value, 10),
       lockAspectRubiks: el.lockAspectRubiks.checked,
+      rubiksIncludeBlack: el.rubiksIncludeBlack.checked,
+      rubiksColorMode: state.rubiksColorMode,
       rubiksColorMap: Object.fromEntries(
         Object.entries(state.rubiksColorMap).map(([name, rgb]) => [name, rgbToHex(rgb)])),
 
@@ -4480,6 +5308,12 @@ function collectSettings() {
       lithophaneMaxThickness: getLithophaneFloat(el.lithophaneMaxThickness, 3.2),
       lithophaneInvert: el.lithophaneInvert.checked,
 
+      screwsWide: parseInt(el.screwsWide.value, 10),
+      screwsTall: parseInt(el.screwsTall.value, 10),
+      screwartMinDepthMm: getScrewartFloat(el.screwartMinDepth, 0),
+      screwartMaxDepthMm: getScrewartFloat(el.screwartMaxDepth, 12),
+      screwartInvert: el.screwartInvert.checked,
+
       stringartShape: [...el.stringartShapeSeg.children].find(b => b.classList.contains("active")).dataset.shape,
       stringartNumPins: parseInt(el.stringartPins.value, 10),
       stringartNumLines: parseInt(el.stringartLines.value, 10),
@@ -4487,6 +5321,26 @@ function collectSettings() {
       stringartFrameSizeUnit: el.stringartFrameSizeUnit.value,
       stringartThreadColor: rgbToHex(state.stringartThreadColor),
       stringartBgColor: rgbToHex(state.stringartBgColor),
+
+      leadedglassShape: leadedglassShapeKey(),
+      leadedglassStyle: leadedglassStyleKey(),
+      leadedglassLeadWidth: parseInt(el.leadedglassLeadWidth.value, 10),
+      leadedglassLeadColor: rgbToHex(state.leadedglassLeadColor),
+      leadedglassBgColor: rgbToHex(state.leadedglassBgColor),
+      leadedglassNumColors: parseInt(el.leadedglassNumColors.value, 10),
+      leadedglassBoldPieceCount: parseInt(el.leadedglassBoldPieceCount.value, 10),
+      leadedglassBoldSpacing: parseFloat(el.leadedglassBoldSpacing.value),
+      leadedglassBoldSeed: getLeadedglassBoldSeed(),
+      leadedglassGridCols: parseInt(el.leadedglassGridCols.value, 10),
+      leadedglassGridCellSize: parseFloat(el.leadedglassGridCellSize.value),
+      leadedglassBodyWidth: parseInt(el.leadedglassBodyWidth.value, 10),
+      leadedglassSubjectPieces: parseInt(el.leadedglassSubjectPieces.value, 10),
+      leadedglassRings: parseInt(el.leadedglassRings.value, 10),
+      leadedglassWedges: parseInt(el.leadedglassWedges.value, 10),
+      leadedglassLatticeSeed: getLeadedglassLatticeSeed(),
+      leadedglassBorderEnabled: !!state.leadedglassBorderEnabled,
+      leadedglassBorderColor: rgbToHex(state.leadedglassBorderColor),
+      leadedglassBorderAccentColor: rgbToHex(state.leadedglassBorderAccentColor),
     },
   };
 }
@@ -4549,6 +5403,8 @@ function applySettings(data) {
   if (Number.isFinite(s.cubesWide)) { el.cubesWide.value = s.cubesWide; el.cubesWideVal.textContent = s.cubesWide; }
   if (Number.isFinite(s.cubesTall)) { el.cubesTall.value = s.cubesTall; el.cubesTallVal.textContent = s.cubesTall; }
   if (typeof s.lockAspectRubiks === "boolean") el.lockAspectRubiks.checked = s.lockAspectRubiks;
+  if (typeof s.rubiksIncludeBlack === "boolean") el.rubiksIncludeBlack.checked = s.rubiksIncludeBlack;
+  if (s.rubiksColorMode === "ramp" || s.rubiksColorMode === "nearest") setRubiksColorMode(s.rubiksColorMode);
   if (s.rubiksColorMap && typeof s.rubiksColorMap === "object") {
     state.rubiksColorMap = Object.fromEntries(
       Object.entries(s.rubiksColorMap).map(([name, hex]) => [name, hexToRgb(hex)]));
@@ -4617,6 +5473,19 @@ function applySettings(data) {
   if (typeof s.lithophaneInvert === "boolean") el.lithophaneInvert.checked = s.lithophaneInvert;
   updateLithophaneEstimate();
 
+  if (Number.isFinite(s.screwsWide)) {
+    el.screwsWide.value = s.screwsWide;
+    el.screwsWideVal.textContent = s.screwsWide;
+  }
+  if (Number.isFinite(s.screwsTall)) {
+    el.screwsTall.value = s.screwsTall;
+    el.screwsTallVal.textContent = s.screwsTall;
+  }
+  if (Number.isFinite(s.screwartMinDepthMm)) el.screwartMinDepth.value = s.screwartMinDepthMm;
+  if (Number.isFinite(s.screwartMaxDepthMm)) el.screwartMaxDepth.value = s.screwartMaxDepthMm;
+  if (typeof s.screwartInvert === "boolean") el.screwartInvert.checked = s.screwartInvert;
+  updateScrewartSizeEstimate();
+
   if (s.stringartShape === "circle" || s.stringartShape === "rect") {
     [...el.stringartShapeSeg.children].forEach(b => b.classList.toggle("active", b.dataset.shape === s.stringartShape));
   }
@@ -4641,6 +5510,87 @@ function applySettings(data) {
     el.stringartBgColorPicker.value = s.stringartBgColor;
   }
   updateStringartEstimate();
+
+  if (["rect", "pointed", "rounded"].includes(s.leadedglassShape)) {
+    [...el.leadedglassShapeSeg.children].forEach(b => b.classList.toggle("active", b.dataset.shape === s.leadedglassShape));
+    onLeadedglassShapeChange();
+  }
+  if (["lattice_subject", "bold_pieces", "panel_grid"].includes(s.leadedglassStyle)) {
+    [...el.leadedglassStyleSeg.children].forEach(b => b.classList.toggle("active", b.dataset.style === s.leadedglassStyle));
+    el.leadedglassLatticePanel.hidden = s.leadedglassStyle !== "lattice_subject";
+    el.leadedglassBoldPanel.hidden = s.leadedglassStyle !== "bold_pieces";
+    el.leadedglassGridPanel.hidden = s.leadedglassStyle !== "panel_grid";
+  }
+  if (Number.isFinite(s.leadedglassLeadWidth)) {
+    el.leadedglassLeadWidth.value = s.leadedglassLeadWidth;
+    el.leadedglassLeadWidthVal.textContent = s.leadedglassLeadWidth;
+  }
+  if (s.leadedglassLeadColor) {
+    state.leadedglassLeadColor = hexToRgb(s.leadedglassLeadColor);
+    setSwatchButton(el.leadedglassLeadColorBtn, state.leadedglassLeadColor);
+    el.leadedglassLeadColorPicker.value = s.leadedglassLeadColor;
+  }
+  if (s.leadedglassBgColor) {
+    state.leadedglassBgColor = hexToRgb(s.leadedglassBgColor);
+    setSwatchButton(el.leadedglassBgColorBtn, state.leadedglassBgColor);
+    el.leadedglassBgColorPicker.value = s.leadedglassBgColor;
+  }
+  if (Number.isFinite(s.leadedglassNumColors)) {
+    el.leadedglassNumColors.value = s.leadedglassNumColors;
+    el.leadedglassNumColorsVal.textContent = s.leadedglassNumColors;
+  }
+  if (Number.isFinite(s.leadedglassBoldPieceCount)) {
+    el.leadedglassBoldPieceCount.value = s.leadedglassBoldPieceCount;
+    el.leadedglassBoldPieceCountVal.textContent = s.leadedglassBoldPieceCount;
+  }
+  if (Number.isFinite(s.leadedglassBoldSpacing)) {
+    el.leadedglassBoldSpacing.value = s.leadedglassBoldSpacing;
+    el.leadedglassBoldSpacingVal.textContent = s.leadedglassBoldSpacing;
+  }
+  if (Number.isFinite(s.leadedglassBoldSeed)) el.leadedglassBoldSeed.value = s.leadedglassBoldSeed;
+  if (Number.isFinite(s.leadedglassGridCols)) {
+    el.leadedglassGridCols.value = s.leadedglassGridCols;
+    el.leadedglassGridColsVal.textContent = s.leadedglassGridCols;
+  }
+  if (Number.isFinite(s.leadedglassGridCellSize)) {
+    el.leadedglassGridCellSize.value = s.leadedglassGridCellSize;
+    el.leadedglassGridCellSizeVal.textContent = s.leadedglassGridCellSize;
+  }
+  if (Number.isFinite(s.leadedglassBodyWidth)) {
+    el.leadedglassBodyWidth.value = s.leadedglassBodyWidth;
+    el.leadedglassBodyWidthVal.textContent = s.leadedglassBodyWidth;
+  }
+  if (Number.isFinite(s.leadedglassSubjectPieces)) {
+    el.leadedglassSubjectPieces.value = s.leadedglassSubjectPieces;
+    el.leadedglassSubjectPiecesVal.textContent = s.leadedglassSubjectPieces;
+  }
+  if (Number.isFinite(s.leadedglassRings)) {
+    el.leadedglassRings.value = s.leadedglassRings;
+    el.leadedglassRingsVal.textContent = s.leadedglassRings;
+  }
+  if (Number.isFinite(s.leadedglassWedges)) {
+    el.leadedglassWedges.value = s.leadedglassWedges;
+    el.leadedglassWedgesVal.textContent = s.leadedglassWedges;
+  }
+  if (Number.isFinite(s.leadedglassLatticeSeed)) el.leadedglassLatticeSeed.value = s.leadedglassLatticeSeed;
+  if (s.leadedglassBorderColor) {
+    state.leadedglassBorderColor = hexToRgb(s.leadedglassBorderColor);
+    setSwatchButton(el.leadedglassBorderColorBtn, state.leadedglassBorderColor);
+    el.leadedglassBorderColorPicker.value = s.leadedglassBorderColor;
+  }
+  if (s.leadedglassBorderAccentColor) {
+    state.leadedglassBorderAccentColor = hexToRgb(s.leadedglassBorderAccentColor);
+    setSwatchButton(el.leadedglassBorderAccentBtn, state.leadedglassBorderAccentColor);
+    el.leadedglassBorderAccentPicker.value = s.leadedglassBorderAccentColor;
+  }
+  // Border is rect-only -- onLeadedglassShapeChange above already forced
+  // the checkbox off for any other shape, so only honor a saved "enabled"
+  // flag when the restored shape is still "rect".
+  if (s.leadedglassBorderEnabled && leadedglassShapeKey() === "rect") {
+    el.leadedglassBorderEnabled.checked = true;
+    onLeadedglassBorderToggle();
+  }
+  updateLeadedglassEstimate();
 
   // Layout mode last, once every mode's own controls are already in place.
   if (s.layoutMode) setLayoutMode(s.layoutMode);
@@ -4814,9 +5764,12 @@ setSwatchButton(el.dieColorBtn, state.dieColor);
 setSwatchButton(el.pipColorBtn, state.pipColor);
 updateColorSourceUI();
 el.stainedglassSeed.value = String(randomStainedglassSeed());
+el.leadedglassBoldSeed.value = String(randomLeadedglassSeed());
+el.leadedglassLatticeSeed.value = String(randomLeadedglassSeed());
 updateSizeEstimate();
 updatePanelEstimate();
 updateRubiksSizeEstimate();
 updateRadialCellEstimate();
 updateStainedglassPieceEstimate();
+updateLeadedglassEstimate();
 refreshPreview();

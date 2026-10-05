@@ -10,7 +10,7 @@ import { rgbToHex } from "./color.js";
 import { colorCounts } from "./colorCounts.js";
 import { footprintLabel, brickCounts } from "./bricks.js";
 import { diceCounts } from "./dice.js";
-import { rubiksCubeCount, RUBIKS_COLOR_NAMES } from "./rubiks.js";
+import { rubiksCubeCount, rubiksNamesForPalette } from "./rubiks.js";
 import { adaptiveColorCounts } from "./adaptive.js";
 import { radialRingSegments } from "./radial.js";
 import { nearestPaintMatchesAllBrands, formatMatch, formatBestMatch } from "./paintColors.js";
@@ -275,6 +275,77 @@ export function buildStainedglassCellsJson(colors, points, canvasW, canvasH, opt
   return JSON.stringify(data, null, 2);
 }
 
+/** Leaded Glass mode's piece list, matching mosaic_core.py's
+ * export_leadedglass_cells_json -- schema depends on layout.kind (see
+ * leadedglass.js's generate/render functions), since each sub-mode's
+ * pieces carry different natural build-reference geometry (a seed
+ * position for Voronoi pieces, a row/col for grid diamonds). Every cell
+ * always gets a piece_type field so one build guide can tell them apart
+ * even when Lattice + Subject mixes two piece_types (subject_voronoi and
+ * sunburst_wedge) in a single export.
+ *
+ * `layout`: { kind: "bold_pieces", points, canvasW, canvasH }
+ *        or { kind: "panel_grid", canvasW, canvasH, cols, rows }
+ *        or { kind: "lattice_subject", canvasW, canvasH, subjectPoints, rings, baseSegments } */
+export function buildLeadedglassCellsJson(quantizedColors, layout, frameShape, generationMode, options = {}) {
+  const { sourceName = "" } = options;
+  const cells = [];
+
+  if (layout.kind === "bold_pieces") {
+    layout.points.forEach(([x, y], i) => {
+      const rgb = quantizedColors[i];
+      cells.push({
+        index: i + 1, piece_type: "voronoi",
+        x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10,
+        rgb, hex: rgbToHex(rgb),
+      });
+    });
+  } else if (layout.kind === "panel_grid") {
+    const { cols, rows } = layout;
+    let idx = 0;
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const rgb = quantizedColors[idx];
+        cells.push({ index: idx + 1, piece_type: "diamond", row: row + 1, col: col + 1, rgb, hex: rgbToHex(rgb) });
+        idx++;
+      }
+    }
+  } else { // lattice_subject
+    const { subjectPoints, rings, baseSegments } = layout;
+    let idx = 0;
+    for (const [x, y] of subjectPoints) {
+      const rgb = quantizedColors[idx];
+      cells.push({
+        index: idx + 1, piece_type: "subject_voronoi",
+        x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10,
+        rgb, hex: rgbToHex(rgb),
+      });
+      idx++;
+    }
+    for (let ring = 0; ring < rings; ring++) {
+      const nSegs = radialRingSegments(ring, baseSegments);
+      for (let seg = 0; seg < nSegs; seg++) {
+        const rgb = quantizedColors[idx];
+        cells.push({
+          index: idx + 1, piece_type: "sunburst_wedge",
+          ring: ring + 1, segment: seg + 1, segments_in_ring: nSegs,
+          rgb, hex: rgbToHex(rgb),
+        });
+        idx++;
+      }
+    }
+  }
+
+  const data = {
+    source_image: sourceName,
+    generation_mode: generationMode, frame_shape: frameShape,
+    canvas_width: layout.canvasW, canvas_height: layout.canvasH,
+    cell_count: cells.length,
+    cells,
+  };
+  return JSON.stringify(data, null, 2);
+}
+
 /** String Art mode's pin sequence -- the thread order plus every pin's
  * (x, y) position, matching mosaic_core.py's export_stringart_sequence_json
  * exactly (x/y rounded to 2 decimal places, thread length to 2 decimal
@@ -378,12 +449,15 @@ export function buildDiceShoppingListCsv(pipGrid, unitPrice = null) {
 }
 
 /** Rubik's Cube mode's shopping list -- total physical cubes needed, plus
- * how many of the 9 stickers-per-cube across the whole mosaic use each of
- * the 6 fixed cube colors. unitPrice, if given, is a rough price per cube
- * -- appends an "estimated_cost" line under the cube total (stickers
- * usually come with the cube, so no per-sticker cost is computed). */
+ * how many of the 9 stickers-per-cube across the whole mosaic use each
+ * palette color. `palette` may be the plain 6-color RUBIKS_PALETTE or the
+ * 7-color includeBlack variant (see rubiks.js's rubiksActivePalette) --
+ * names are derived from each entry's own RGB, so either length works.
+ * unitPrice, if given, is a rough price per cube -- appends an
+ * "estimated_cost" line under the cube total (stickers usually come with
+ * the cube, so no per-sticker cost is computed). */
 export function buildRubiksShoppingListCsv(grid, palette, gridW, gridH, unitPrice = null) {
-  const counts = colorCounts(grid, palette, RUBIKS_COLOR_NAMES);
+  const counts = colorCounts(grid, palette, rubiksNamesForPalette(palette));
   const cubeTotal = rubiksCubeCount(gridW, gridH);
   const lines = [toCsv(["cubes_needed_total", String(cubeTotal)], [])];
   if (unitPrice !== null) {
@@ -392,6 +466,26 @@ export function buildRubiksShoppingListCsv(grid, palette, gridW, gridH, unitPric
   }
   lines.push("");
   lines.push(toCsv(["color", "hex", "sticker_count"], counts.map(c => [c.name, c.hex, c.count])));
+  return lines.join("\r\n");
+}
+
+/** Screw Art mode's depth list -- a flat per-screw CSV: row, col
+ * (1-indexed), depth_mm -- a direct instruction list (one row per screw)
+ * rather than a count-per-category shopping list, since depth here is a
+ * continuous value with no discrete categories the way Dice's pip counts
+ * or Rubik's sticker colors are. `depthGrid` is a flat Float64Array/Array
+ * (row-major, length screwsWide*screwsTall). Mirrors mosaic_core.py's
+ * export_screwart_depth_csv. */
+export function buildScrewartDepthCsv(depthGrid, screwsWide, screwsTall) {
+  const lines = [toCsv(["screws_needed_total", String(screwsWide * screwsTall)], [])];
+  lines.push("");
+  const rows = [];
+  for (let row = 0; row < screwsTall; row++) {
+    for (let col = 0; col < screwsWide; col++) {
+      rows.push([row + 1, col + 1, depthGrid[row * screwsWide + col].toFixed(2)]);
+    }
+  }
+  lines.push(toCsv(["row", "col", "depth_mm"], rows));
   return lines.join("\r\n");
 }
 

@@ -41,8 +41,18 @@ export function makeMulberry32(seed) {
  * 2*minDist] around an active point, deliberately never using sin/cos (see
  * module docstring). Returns an array of [x, y] pairs; deterministic for a
  * given seed, and verified bit-identical to the Python port for every seed
- * tried during development. */
-export function poissonDiscPoints(width, height, minDist, seed, k = 30, maxInnerTries = 200) {
+ * tried during development.
+ *
+ * boundsTest, if given, is an extra (x, y) => bool a candidate must also
+ * satisfy (beyond the plain width x height rectangle) to be accepted --
+ * e.g. "inside this arch's silhouette" for leadedglass.js's frame shapes
+ * (see leadedglassInsideFrame). Every rng() draw still happens in the exact
+ * same order whether or not boundsTest is given (checked last, after the
+ * same width/height and min-distance tests), so omitting it reproduces the
+ * original behavior exactly for every existing caller/seed -- matches
+ * mosaic_core.py's poisson_disc_points' bounds_test parameter line for
+ * line. */
+export function poissonDiscPoints(width, height, minDist, seed, k = 30, maxInnerTries = 200, boundsTest = null) {
   const rng = makeMulberry32(seed);
   const cellSize = minDist / Math.sqrt(2);
   const gridW = Math.max(1, Math.ceil(width / cellSize));
@@ -59,6 +69,7 @@ export function poissonDiscPoints(width, height, minDist, seed, k = 30, maxInner
 
   function farEnough(x, y) {
     if (x < 0 || x >= width || y < 0 || y >= height) return false;
+    if (boundsTest && !boundsTest(x, y)) return false;
     const [gx, gy] = gridIndex(x, y);
     const x0 = Math.max(0, gx - 2), x1 = Math.min(gridW - 1, gx + 2);
     const y0 = Math.max(0, gy - 2), y1 = Math.min(gridH - 1, gy + 2);
@@ -82,7 +93,18 @@ export function poissonDiscPoints(width, height, minDist, seed, k = 30, maxInner
     grid[gy * gridW + gx] = idx;
   }
 
-  addPoint(rng() * width, rng() * height);
+  // The very first point isn't distance-checked against anything (nothing
+  // yet to be too close to), so boundsTest has to be applied here directly
+  // rather than through farEnough -- rejection-resample within the
+  // rectangle until one satisfies it, matching mosaic_core.py's own
+  // first-point loop op for op (same 10000-try safety cap).
+  let firstX = 0, firstY = 0;
+  for (let firstTry = 0; firstTry < 10000; firstTry++) {
+    firstX = rng() * width;
+    firstY = rng() * height;
+    if (!boundsTest || boundsTest(firstX, firstY)) break;
+  }
+  addPoint(firstX, firstY);
 
   while (active.length > 0) {
     let activeI = Math.floor(rng() * active.length);
@@ -96,6 +118,109 @@ export function poissonDiscPoints(width, height, minDist, seed, k = 30, maxInner
         dy = rng() * 4 * minDist - 2 * minDist;
         const d2 = dx * dx + dy * dy;
         if (d2 >= minDist * minDist && d2 <= (2 * minDist) * (2 * minDist)) break;
+      }
+      const cx = px + dx, cy = py + dy;
+      if (farEnough(cx, cy)) {
+        addPoint(cx, cy);
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      active.splice(activeI, 1);
+    }
+  }
+
+  return points;
+}
+
+/** Variable-density sibling of poissonDiscPoints: same Bridson's blue-noise
+ * algorithm, except the required spacing around each point is looked up
+ * per-location via minDistFn(x, y) instead of being one fixed value -- so a
+ * region where minDistFn returns a small number packs in small, dense
+ * points, and a region where it returns a big number spaces out big,
+ * sparse ones. minDistMin/minDistMax (the known range of minDistFn's
+ * output) size the acceleration grid and neighbor-search radius
+ * conservatively so no point is ever missed regardless of local density.
+ *
+ * This is intentionally a separate function from poissonDiscPoints rather
+ * than a generalization of it: every existing caller (Tile Mosaic, Stained
+ * Glass, Panel Grid, Lattice + Subject's ellipse) keeps using the original
+ * fixed-minDist path untouched, so their existing bit-identical Python/JS
+ * parity guarantees are completely unaffected. Only Leaded Glass's Bold
+ * Pieces sub-mode uses this variant -- and because minDistFn is itself
+ * image-derived (a local-detail measure, not a portable closed-form
+ * value), point PLACEMENT from this function is not held to that same
+ * bit-identical bar cross-language, only stylistic/statistical similarity.
+ * Ported from mosaic_core.py's poisson_disc_points_variable. */
+export function poissonDiscPointsVariable(width, height, minDistFn, minDistMin, minDistMax, seed,
+                                           k = 30, maxInnerTries = 200, boundsTest = null) {
+  const rng = makeMulberry32(seed);
+  const cellSize = Math.max(1e-6, minDistMin / Math.sqrt(2));
+  const gridW = Math.max(1, Math.ceil(width / cellSize));
+  const gridH = Math.max(1, Math.ceil(height / cellSize));
+  const grid = new Array(gridW * gridH).fill(-1);
+  const points = [];
+  const active = [];
+  // Wide enough that a neighbor needing up to minDistMax of personal space
+  // around it is never missed, however fine the grid is sized for minDistMin
+  // elsewhere.
+  const searchRadius = Math.max(2, Math.ceil((2.0 * minDistMax) / cellSize));
+
+  function gridIndex(x, y) {
+    const gx = Math.min(gridW - 1, Math.max(0, Math.floor(x / cellSize)));
+    const gy = Math.min(gridH - 1, Math.max(0, Math.floor(y / cellSize)));
+    return [gx, gy];
+  }
+
+  function farEnough(x, y) {
+    if (x < 0 || x >= width || y < 0 || y >= height) return false;
+    if (boundsTest && !boundsTest(x, y)) return false;
+    const required = minDistFn(x, y);
+    const [gx, gy] = gridIndex(x, y);
+    const x0 = Math.max(0, gx - searchRadius), x1 = Math.min(gridW - 1, gx + searchRadius);
+    const y0 = Math.max(0, gy - searchRadius), y1 = Math.min(gridH - 1, gy + searchRadius);
+    for (let iy = y0; iy <= y1; iy++) {
+      for (let ix = x0; ix <= x1; ix++) {
+        const idx = grid[iy * gridW + ix];
+        if (idx === -1) continue;
+        const [px, py] = points[idx];
+        const dx = px - x, dy = py - y;
+        if (dx * dx + dy * dy < required * required) return false;
+      }
+    }
+    return true;
+  }
+
+  function addPoint(x, y) {
+    const idx = points.length;
+    points.push([x, y]);
+    active.push(idx);
+    const [gx, gy] = gridIndex(x, y);
+    grid[gy * gridW + gx] = idx;
+  }
+
+  let firstX = 0, firstY = 0;
+  for (let firstTry = 0; firstTry < 10000; firstTry++) {
+    firstX = rng() * width;
+    firstY = rng() * height;
+    if (!boundsTest || boundsTest(firstX, firstY)) break;
+  }
+  addPoint(firstX, firstY);
+
+  while (active.length > 0) {
+    let activeI = Math.floor(rng() * active.length);
+    if (activeI >= active.length) activeI = active.length - 1;
+    const [px, py] = points[active[activeI]];
+    const localDist = minDistFn(px, py);
+    let found = false;
+    for (let attempt = 0; attempt < k; attempt++) {
+      let dx = 0, dy = 0;
+      for (let inner = 0; inner < maxInnerTries; inner++) {
+        dx = rng() * 4 * localDist - 2 * localDist;
+        dy = rng() * 4 * localDist - 2 * localDist;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= localDist * localDist && d2 <= (2 * localDist) * (2 * localDist)) break;
       }
       const cx = px + dx, cy = py + dy;
       if (farEnough(cx, cy)) {
@@ -138,7 +263,7 @@ export function stainedglassCanvasSize(imageW, imageH, targetCount, minDist) {
  * only the *nearest-by-Euclidean-distance* result does, which is a stable,
  * effectively tie-free comparison for a continuous random point set (unlike
  * seed generation above, which does need bit-identical arithmetic). */
-function buildSeedIndex(points, width, height, minDist) {
+export function buildSeedIndex(points, width, height, minDist) {
   const cellSize = Math.max(1e-6, minDist / Math.sqrt(2));
   const gridW = Math.max(1, Math.ceil(width / cellSize));
   const gridH = Math.max(1, Math.ceil(height / cellSize));
@@ -153,7 +278,7 @@ function buildSeedIndex(points, width, height, minDist) {
   return { cellSize, gridW, gridH, buckets };
 }
 
-function nearestSeed(index, points, x, y) {
+export function nearestSeed(index, points, x, y) {
   const { cellSize, gridW, gridH, buckets } = index;
   const gx = Math.min(gridW - 1, Math.max(0, Math.floor(x / cellSize)));
   const gy = Math.min(gridH - 1, Math.max(0, Math.floor(y / cellSize)));
@@ -237,7 +362,7 @@ export function sampleStainedglassColors(sourceCanvas, points, canvasW, canvasH,
  * the same shape in both renders (not required for parity -- rendering
  * differences are tolerated the same way radial's polygon draw is -- but
  * cheap to match and keeps the two outputs visually consistent). */
-function dilateCross(mask, w, h, iterations) {
+export function dilateCross(mask, w, h, iterations) {
   let current = mask;
   for (let it = 0; it < iterations; it++) {
     const next = new Uint8Array(current.length);

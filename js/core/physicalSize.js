@@ -81,6 +81,7 @@ export const ASSEMBLY_SECONDS_PER_PIECE = {
   crossstitch: 30,   // one hand-sewn cross stitch
   foundobject: 15,   // glue/place one found object
   stainedglass: 45,   // cut/fit an irregular piece, then set it in lead/grout
+  screwart: 25,       // drive one screw to its target depth, check against the guide
 };
 
 /** Format a rough hands-on build-time estimate for pieceCount physical

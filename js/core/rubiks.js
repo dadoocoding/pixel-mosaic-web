@@ -43,6 +43,119 @@ const RUBIKS_COLOR_LETTERS = new Map(
   RUBIKS_CUBE_COLORS.map(c => [rgbToHex(c.rgb), c.name[0]])
 );
 
+// Optional 7th "color": the cube's own black plastic body, shown on a
+// square where a builder deliberately leaves that sticker off. This is a
+// real, commonly-used technique among physical Rubik's Cube mosaic/
+// portrait builders, not a software trick -- it matters here because the 6
+// official stickers are all fully-saturated colors with no dark or neutral
+// tone among them, so a photo's shadows, backgrounds, and other
+// low-saturation regions have no good match and collapse into one flat
+// nearest color (see generateRubiksMosaic's includeBlack parameter, which
+// is what actually turns this on). Not a documented/measured sticker color
+// -- this app's own approximation of bare black cube plastic, and assumes
+// a classic black-bodied cube (not a white-bodied "stickerless" one).
+// Ported from mosaic_core.py's RUBIKS_BLACK_NAME/RUBIKS_BLACK_RGB.
+export const RUBIKS_BLACK_NAME = "Black (cube body)";
+export const RUBIKS_BLACK_RGB = [18, 18, 18];
+RUBIKS_COLOR_LETTERS.set(rgbToHex(RUBIKS_BLACK_RGB), "K"); // print convention -- "B" is already Blue
+// Reverse lookup covering both the 6 real stickers and the optional black
+// tile, so any palette built from rubiksActivePalette (6 or 7 long) can
+// recover its own color names without a second parameter -- see
+// renderRubiksKey.
+const RUBIKS_NAME_BY_HEX = new Map(RUBIKS_CUBE_COLORS.map(c => [rgbToHex(c.rgb), c.name]));
+RUBIKS_NAME_BY_HEX.set(rgbToHex(RUBIKS_BLACK_RGB), RUBIKS_BLACK_NAME);
+
+/** Color names for an arbitrary Rubik's palette (6-long or the 7-long
+ * includeBlack variant), derived per-entry from its own RGB rather than
+ * assumed from position/length -- used anywhere a palette that might or
+ * might not include the black tile needs names alongside it (the build
+ * guide's color key, the shopping list CSV). */
+export function rubiksNamesForPalette(palette) {
+  return palette.map(rgb => RUBIKS_NAME_BY_HEX.get(rgbToHex(rgb)) || "?");
+}
+
+/** { palette, names } for the Rubik's fixed-palette quantizer -- the 6 real
+ * sticker colors, plus the cube-body "black" 7th tile when includeBlack is
+ * set (see RUBIKS_BLACK_RGB). Always returns parallel arrays in the same
+ * order, so callers that need per-color names and callers that just need
+ * the raw RGB list (quantizeToFixedPalette) share one source of truth
+ * instead of the names potentially drifting out of sync with the palette.
+ * Ported from mosaic_core.py's rubiks_active_palette. */
+export function rubiksActivePalette(includeBlack = false) {
+  const names = [...RUBIKS_COLOR_NAMES];
+  const palette = RUBIKS_PALETTE.map(rgb => [...rgb]);
+  if (includeBlack) {
+    names.push(RUBIKS_BLACK_NAME);
+    palette.push([...RUBIKS_BLACK_RGB]);
+  }
+  return { palette, names };
+}
+
+// Valid values for generateRubiksMosaic's colorMode option -- see
+// RUBIKS_LUMA_ORDER/quantizeGridLumaRanked for what "ramp" does.
+export const RUBIKS_COLOR_MODES = ["nearest", "ramp"];
+
+// Same luma weights as Dice mode's own (unexported) srgbLuminance -- kept
+// as a separate local copy rather than importing from dice.js, since the
+// two modules otherwise have no dependency on each other.
+function srgbLuminance([r, g, b]) {
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+/** The 6 real sticker colors sorted lightest-to-darkest by actual measured
+ * brightness -- White, Yellow, Orange, Green, Red, Blue. Computed from
+ * RUBIKS_CUBE_COLORS itself (not hand-typed) so it can never drift out of
+ * sync if those swatches change. Note Green(98) is brighter than Red(68)
+ * and Blue(55) despite "looking" like the darker color by name -- Blue is
+ * the actual darkest of the 6. Used by quantizeGridLumaRanked for the
+ * optional "Brightness Ramp" color mode. Ported from mosaic_core.py's
+ * rubiks_luma_order. */
+export const RUBIKS_LUMA_ORDER = [...RUBIKS_CUBE_COLORS].sort(
+  (a, b) => srgbLuminance(b.rgb) - srgbLuminance(a.rgb)
+);
+
+/** Alternative Rubik's Cube color-mapping strategy to quantizeToFixedPalette's
+ * nearest-hue matching: ignores each cell's actual hue entirely and instead
+ * ranks it purely by brightness (same luma weights as srgbLuminance/Dice
+ * mode), then recolors it with whichever entry in `order` (a light-to-dark
+ * array of {name, rgb}, e.g. RUBIKS_LUMA_ORDER) sits at the matching
+ * brightness rank -- so a cell's actual color might come out Orange purely
+ * because of its tone, not its hue.
+ *
+ * A deliberate trade-off, not a strictly "better" result: it recovers
+ * tonal shading/gradient detail that nearest-hue matching flattens away in
+ * low-saturation regions (see RUBIKS_BLACK_RGB's comment for that
+ * problem), at the cost of photographic color accuracy -- a white rocket
+ * exhaust against a dark sky, for instance, can end up looking like
+ * scattered color noise rather than a clean white shape, since the
+ * exhaust's own mid-tone shading gets spread across several color bands
+ * instead of staying one color. Best suited to images with rich midtone
+ * gradients (faces, reflective objects) rather than images that are mostly
+ * flat light-on-dark shapes.
+ *
+ * `grid` is the flat [r,g,b,...]-per-cell array imageToGrid produces.
+ * Returns a flat array of the same length, each cell replaced by one of
+ * `order`'s RGB triples -- the same shape/convention
+ * quantizeToFixedPalette's reconstructed grid uses, so callers can treat
+ * the two modes interchangeably. Ported from mosaic_core.py's
+ * quantize_grid_luma_ranked. */
+export function quantizeGridLumaRanked(grid, order) {
+  const levels = order.map(({ rgb }) => srgbLuminance(rgb));
+  const rgbs = order.map(({ rgb }) => rgb);
+  const out = new Array(grid.length);
+  for (let i = 0; i < grid.length; i++) {
+    const gray = srgbLuminance(grid[i]);
+    let bestIdx = 0;
+    let bestDiff = Infinity;
+    for (let k = 0; k < levels.length; k++) {
+      const diff = Math.abs(gray - levels[k]);
+      if (diff < bestDiff) { bestDiff = diff; bestIdx = k; }
+    }
+    out[i] = rgbs[bestIdx];
+  }
+  return out;
+}
+
 function blendRgb([r, g, b], [or_, og, ob], t) {
   return [
     Math.round(r + (or_ - r) * t),
@@ -159,7 +272,11 @@ export function rubiksCubeCount(gridW, gridH) {
  * need -- no other code has to know a reassignment happened. */
 export function remapRubiksColors(baseGrid, colorMap) {
   const swap = new Map();
-  for (const { name, rgb } of RUBIKS_CUBE_COLORS) {
+  // Black is always checked too, whether or not this particular grid was
+  // generated with includeBlack -- a color that's simply absent from the
+  // grid just matches zero cells, so this is safe either way.
+  const colors = [...RUBIKS_CUBE_COLORS, { name: RUBIKS_BLACK_NAME, rgb: RUBIKS_BLACK_RGB }];
+  for (const { name, rgb } of colors) {
     const newRgb = colorMap[name] || rgb;
     if (rgbToHex(newRgb) !== rgbToHex(rgb)) swap.set(rgbToHex(rgb), newRgb);
   }
@@ -223,11 +340,15 @@ export function renderRubiksBuildSheet(grid, gridW, gridH, cellSize, createCanva
 }
 
 /** Page 2 of the build guide: color key (letter, swatch, name, hex, sticker
- * count) plus the total physical cube count. */
+ * count) plus the total physical cube count. `palette` may be the plain
+ * 6-color RUBIKS_PALETTE or the 7-color includeBlack variant (see
+ * rubiksActivePalette) -- names are derived from each entry's own RGB via
+ * rubiksNamesForPalette rather than hardcoded, so either length works. */
 export function renderRubiksKey(grid, palette, gridW, gridH, createCanvasFn, options = {}) {
   const { swatchSize = 50, bgColor = [255, 255, 255], textColor = [20, 20, 20],
           lineColor = [210, 210, 210] } = options;
-  const counts = colorCounts(grid, palette, RUBIKS_COLOR_NAMES);
+  const names = rubiksNamesForPalette(palette);
+  const counts = colorCounts(grid, palette, names);
   const cubeTotal = rubiksCubeCount(gridW, gridH);
 
   const pad = 20;
