@@ -9,6 +9,8 @@ import { imageToGrid } from "./core/grid.js";
 import { renderMosaic, renderBrickMosaic, estimateOutputDimensions, renderPaintByNumber, renderColorKey } from "./core/render.js";
 import { hexHitTest, circleInterlockHitTest, diamondInterlockHitTest, interlockRowHeightFactor, shapeColumnWidthFactor } from "./core/shapes.js";
 import { splitIntoPanels } from "./core/panels.js";
+import { applyCropAndShape, applyShapeToCanvas, shapeMaskGrid, shapePieceCount, shapeLabelSuffix, SHAPE_LABELS } from "./core/shape.js";
+import { openCropEditor } from "./ui/cropEditor.js";
 import { LEGO_BRICK_SIZES, footprintLabel } from "./core/bricks.js";
 import { colorCounts } from "./core/colorCounts.js";
 import { LEGO_SOLID_COLORS, PERLER_BEAD_COLORS, HAMA_BEAD_COLORS, ARTKAL_BEAD_COLORS, parsePaletteFile } from "./core/palettes.js";
@@ -75,6 +77,11 @@ import {
   SCREWART_MIN_SCREWS_ACROSS, SCREWART_MAX_SCREWS_ACROSS,
   sampleScrewartDepthGrid, renderScrewartMosaic, renderScrewartBuildSheet, renderScrewartInfoPage,
 } from "./core/screwart.js";
+import {
+  STENCIL_DEFAULT_COLORS, STENCIL_DEFAULT_BG, STENCIL_PANEL_COLOR,
+  stencilPrepareRgb, buildStencilLayers, stencilLayerStats, stencilSvgText,
+  renderStencilComposite, renderStencilSheet, renderStencilPrintPage,
+} from "./core/stencil.js";
 
 // Raised from 240 for Counted Cross-Stitch mode's higher-resolution
 // patterns; applies to every mode since they share these sliders.
@@ -120,6 +127,13 @@ const state = {
   renderedCircleInterlock: false,
   renderedDiamondInterlock: false,
   outputCanvas: null,
+  // Crop & Shape tools (see core/shape.js). sourceCanvas is always the
+  // EFFECTIVE (cropped) image every mode reads; originalCanvas keeps the
+  // untouched upload so crop/shape can be changed any time.
+  originalCanvas: null,
+  cropBox: null,
+  shapeBox: null,
+  shapeType: "none",
   bgColor: [18, 18, 20],
   monochromeBaseColor: [40, 70, 170],
   colorSourceMode: "auto",
@@ -316,9 +330,54 @@ const state = {
   screwartMaxDepthMm: 12,
   screwartInvert: false,
   screwartDepthGrid: null,
+  // Stencil mode: stencil = last Generate's {layers, w, h, colors, bg, widthIn, overlap}.
+  stencil: null,
+  screwartDepthGrid: null,
   screwartRenderedMinDepthMm: null,
   screwartRenderedMaxDepthMm: null,
 };
+
+// Every assignment to outputCanvas/brickCanvas passes through here, so any
+// mode's render -- including recolors that re-render without going through
+// Generate -- comes out transparent outside an oval/circle shape.
+{
+  let outCanvas = null, brickCanvas = null;
+  const masked = (c) => (c && (state.shapeType === "oval" || state.shapeType === "circle")
+    ? applyShapeToCanvas(c, state.shapeType) : c);
+  Object.defineProperty(state, "outputCanvas", {
+    get: () => outCanvas, set: (c) => { outCanvas = masked(c); }, enumerable: true,
+  });
+  Object.defineProperty(state, "brickCanvas", {
+    get: () => brickCanvas, set: (c) => { brickCanvas = masked(c); }, enumerable: true,
+  });
+}
+
+/** Cell mask (Uint8Array, 1 = built) for the current Crop & Shape shape at
+ *  the given grid size, or null when nothing is masked -- so every export
+ *  that passes it behaves exactly as before when no oval/circle is set. */
+function exportMask(w, h) {
+  return (state.shapeType === "oval" || state.shapeType === "circle")
+    ? shapeMaskGrid(state.shapeType, w, h) : null;
+}
+
+/** Same, per CUBE for Rubik's Cube mode (a cube is in or out as a whole). */
+function rubiksCubeMaskForExport() {
+  return exportMask(Math.floor(state.renderedGridW / 3), Math.floor(state.renderedGridH / 3));
+}
+
+/** Slice a flat grid-wide mask down to one panel's cells. */
+function panelMask(mask, gridW, p) {
+  const out = new Uint8Array(p.width * p.height);
+  for (let r = 0; r < p.height; r++) {
+    for (let c = 0; c < p.width; c++) out[r * p.width + c] = mask[(p.rowStart + r) * gridW + p.colStart + c];
+  }
+  return out;
+}
+
+function formatNumberTrim(n) {
+  const t = n.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return t === "" ? "0" : t;
+}
 
 const brickSizeSelections = new Map(LEGO_BRICK_SIZES.map(([w, h]) => [`${w}x${h}`, true]));
 
@@ -349,7 +408,19 @@ const el = {
   radialPanel: $("radialPanel"), stainedglassPanel: $("stainedglassPanel"),
   leadedglassPanel: $("leadedglassPanel"),
   lithophanePanel: $("lithophanePanel"), stringartPanel: $("stringartPanel"),
-  screwartPanel: $("screwartPanel"),
+  screwartPanel: $("screwartPanel"), stencilPanel: $("stencilPanel"),
+  stencilLayers: $("stencilLayers"), stencilLayersVal: $("stencilLayersVal"),
+  stencilRemoveBg: $("stencilRemoveBg"),
+  stencilBgTolerance: $("stencilBgTolerance"), stencilBgToleranceVal: $("stencilBgToleranceVal"),
+  stencilSmooth: $("stencilSmooth"), stencilSmoothVal: $("stencilSmoothVal"),
+  stencilMinArea: $("stencilMinArea"), stencilMinAreaVal: $("stencilMinAreaVal"),
+  stencilBridge: $("stencilBridge"), stencilBridgeVal: $("stencilBridgeVal"),
+  stencilDetail: $("stencilDetail"), stencilDetailVal: $("stencilDetailVal"),
+  stencilOverlap: $("stencilOverlap"), stencilWidthIn: $("stencilWidthIn"),
+  stencilBgColor: $("stencilBgColor"), stencilEstimate: $("stencilEstimate"),
+  stencilGenerateBtn: $("stencilGenerateBtn"),
+  previewStencilPdfBtn: $("previewStencilPdfBtn"), exportStencilPdfBtn: $("exportStencilPdfBtn"),
+  exportStencilSvgBtn: $("exportStencilSvgBtn"), exportStencilOverviewBtn: $("exportStencilOverviewBtn"),
   colorSourceSeg: $("colorSourceSeg"), colorsLabel: $("colorsLabel"),
   numColors: $("numColors"), numColorsVal: $("numColorsVal"),
   fixedPaletteLabel: $("fixedPaletteLabel"), choosePaletteBtn: $("choosePaletteBtn"),
@@ -371,6 +442,8 @@ const el = {
   cubesWide: $("cubesWide"), cubesWideVal: $("cubesWideVal"),
   cubesTall: $("cubesTall"), cubesTallVal: $("cubesTallVal"),
   lockAspectRubiks: $("lockAspectRubiks"),
+  cropShapeBtn: $("cropShapeBtn"), cropShapeSummary: $("cropShapeSummary"),
+  lockAspectScrewart: $("lockAspectScrewart"),
   rubiksColorModeSeg: $("rubiksColorModeSeg"), rubiksBlackGroup: $("rubiksBlackGroup"),
   rubiksIncludeBlack: $("rubiksIncludeBlack"),
   rubiksSizeEstimate: $("rubiksSizeEstimate"),
@@ -856,6 +929,12 @@ async function loadImageFromURL(url) {
 }
 
 function applyLoadedImage(canvas, displayName) {
+  state.originalCanvas = canvas;
+  state.cropBox = null;
+  state.shapeBox = null;
+  state.shapeType = "none";
+  el.cropShapeBtn.disabled = false;
+  updateCropShapeSummary();
   state.sourceCanvas = canvas;
   state.sourceFileName = displayName;
   state.currentProjectId = null;  // new photo -> next generate starts a new Recent Projects entry
@@ -905,6 +984,7 @@ function applyLoadedImage(canvas, displayName) {
   state.screwartDepthGrid = null;
   state.screwartRenderedMinDepthMm = null;
   state.screwartRenderedMaxDepthMm = null;
+  state.stencil = null;
   state.renderedMode = state.layoutMode;
   clearBrickLayout();
   disableGenerationDependentButtons();
@@ -921,11 +1001,14 @@ function applyLoadedImage(canvas, displayName) {
   el.lithophaneGenerateBtn.disabled = false;
   el.stringartGenerateBtn.disabled = false;
   el.screwartGenerateBtn.disabled = false;
+  el.stencilGenerateBtn.disabled = false;
   resetSampleDisplay();
 
   if (el.lockAspect.checked) syncHeightToAspect();
   if (el.lockAspectRubiks.checked) syncCubesTallToAspect();
+  if (el.lockAspectScrewart.checked) syncScrewsTallToAspect();
   if (el.lithophaneLockAspect.checked) onLithophaneWidthChange();
+  updateStencilEstimate();
 
   setViewMode("source");
   updateSizeEstimate();
@@ -939,6 +1022,72 @@ function applyLoadedImage(canvas, displayName) {
   updateScrewartSizeEstimate();
   setStatus("Image loaded. Adjust settings and click Generate.");
 }
+
+
+// ---------------------------------------------------------------------------
+// Crop & Shape (see core/shape.js, ui/cropEditor.js)
+// ---------------------------------------------------------------------------
+
+function updateCropShapeSummary() {
+  if (!state.originalCanvas) { el.cropShapeSummary.textContent = ""; return; }
+  const parts = [];
+  if (state.cropBox) parts.push("cropped");
+  if (state.shapeType !== "none") parts.push(SHAPE_LABELS[state.shapeType].toLowerCase());
+  if (parts.length === 0) { el.cropShapeSummary.textContent = ""; return; }
+  el.cropShapeSummary.textContent =
+    `${parts.join(" + ")} \u2014 ${state.sourceCanvas.width}\u00d7${state.sourceCanvas.height} px used`;
+}
+
+/** Rebuild state.sourceCanvas (the effective image every mode reads) from
+ *  the original + crop/shape boxes, re-sync every aspect lock to it, and --
+ *  when there is a rendered output -- regenerate so the result follows. */
+async function recomputeEffectiveSource({ regenerate = true } = {}) {
+  if (!state.originalCanvas) return;
+  state.sourceCanvas = applyCropAndShape(state.originalCanvas, makeCanvas, state.cropBox,
+    state.shapeType === "none" ? null : state.shapeBox);
+  updateCropShapeSummary();
+
+  if (el.lockAspect.checked) syncHeightToAspect();
+  if (el.lockAspectRubiks.checked) syncCubesTallToAspect();
+  if (el.lockAspectScrewart.checked) syncScrewsTallToAspect();
+  if (el.lithophaneLockAspect.checked) onLithophaneWidthChange();
+  updateStencilEstimate();
+  updateSizeEstimate();
+  updatePanelEstimate();
+  updateRubiksSizeEstimate();
+  updateRadialCellEstimate();
+  updateStainedglassPieceEstimate();
+  updateLeadedglassEstimate();
+  updateLithophaneEstimate();
+  updateStringartEstimate();
+  updateScrewartSizeEstimate();
+  updatePhysicalSizeEstimate();
+
+  if (regenerate && state.outputCanvas && state.renderedMode) {
+    setStatus("Crop/shape changed \u2014 regenerating...");
+    await generateForCurrentMode();
+  } else {
+    refreshPreview(true);
+  }
+}
+
+el.cropShapeBtn.addEventListener("click", () => {
+  if (!state.originalCanvas) return;
+  openCropEditor({
+    originalCanvas: state.originalCanvas,
+    cropBox: state.cropBox,
+    shapeBox: state.shapeBox,
+    shapeType: state.shapeType,
+    createCanvasFn: makeCanvas,
+    showDialog, closeDialog,
+    onApply: async ({ cropBox, shapeBox, shapeType }) => {
+      state.cropBox = cropBox;
+      state.shapeBox = shapeBox;
+      state.shapeType = shapeType;
+      await recomputeEffectiveSource({ regenerate: true });
+    },
+  });
+});
 
 el.browseBtn.addEventListener("click", () => el.fileInput.click());
 el.fileInput.addEventListener("change", () => {
@@ -1313,15 +1462,23 @@ function updatePhysicalSizeEstimate() {
   }
 
   const formatted = formatPhysicalSize(countW, countH, pieceSize, unit);
+  // Oval/circle shapes leave the corner cells out of the build, so the real
+  // piece count (and assembly time) is the cells inside the ellipse.
+  const builtCount = shapePieceCount(state.shapeType, countW, countH);
   const parts = [];
   if (formatted) {
-    const plural = countW * countH !== 1 ? "s" : "";
-    parts.push(`Physical size: ${formatted}  (${countW}\u00d7${countH} ${pieceWord}${plural})`);
+    const plural = builtCount !== 1 ? "s" : "";
+    const shapeNote = (state.shapeType === "oval" || state.shapeType === "circle")
+      ? `, ${builtCount} inside the ${state.shapeType}` : "";
+    parts.push(`Physical size: ${formatted}  (${countW}\u00d7${countH} ${pieceWord}${plural}${shapeNote})`);
+    const suffix = shapeLabelSuffix(state.shapeType, formatNumberTrim(countW * pieceSize),
+      formatNumberTrim(countH * pieceSize), unit);
+    if (suffix) parts.push(suffix);
   }
 
   const secondsPerPiece = ASSEMBLY_SECONDS_PER_PIECE[state.layoutMode];
   if (secondsPerPiece) {
-    const timeText = formatAssemblyTime(countW * countH, secondsPerPiece);
+    const timeText = formatAssemblyTime(builtCount, secondsPerPiece);
     if (timeText) {
       parts.push(`Assembly time: ${timeText} (rough estimate, ~${secondsPerPiece}s/${pieceWord})`);
     }
@@ -1371,8 +1528,21 @@ el.lockAspectRubiks.addEventListener("change", () => {
   if (el.lockAspectRubiks.checked && state.sourceCanvas) { syncCubesTallToAspect(); updateRubiksSizeEstimate(); }
 });
 
+function syncScrewsTallToAspect() {
+  const w = parseInt(el.screwsWide.value, 10);
+  const aspect = state.sourceCanvas.height / state.sourceCanvas.width;
+  let h = Math.max(SCREWART_MIN_SCREWS_ACROSS, Math.round(w * aspect));
+  h = Math.min(h, SCREWART_MAX_SCREWS_ACROSS);
+  el.screwsTall.value = h;
+  el.screwsTallVal.textContent = h;
+}
+el.lockAspectScrewart.addEventListener("change", () => {
+  if (el.lockAspectScrewart.checked && state.sourceCanvas) { syncScrewsTallToAspect(); updateScrewartSizeEstimate(); }
+});
+
 el.screwsWide.addEventListener("input", () => {
   el.screwsWideVal.textContent = el.screwsWide.value;
+  if (el.lockAspectScrewart.checked && state.sourceCanvas) syncScrewsTallToAspect();
   updateScrewartSizeEstimate();
 });
 el.screwsTall.addEventListener("input", () => {
@@ -1535,6 +1705,10 @@ function rerenderCurrent(resetView = true) {
       state.stringartCanvas, state.stringartShape, STRINGART_WORKING_SIZE,
       state.stringartThreadColor, state.stringartBgColor, makeCanvas);
     if (state.viewMode === "output") refreshPreview(resetView);
+  } else if (state.renderedMode === "stencil" && state.stencil) {
+    const st = state.stencil;
+    state.outputCanvas = renderStencilComposite(st.layers, st.w, st.h, st.colors, st.bg, 900, makeCanvas);
+    if (state.viewMode === "output") refreshPreview(resetView);
   }
 }
 
@@ -1571,6 +1745,7 @@ function setLayoutMode(mode) {
   el.lithophanePanel.hidden = mode !== "lithophane";
   el.stringartPanel.hidden = mode !== "stringart";
   el.screwartPanel.hidden = mode !== "screwart";
+  el.stencilPanel.hidden = mode !== "stencil";
   // Rubik's Cube mode sizes itself in cube units (cubesWide/cubesTall),
   // Radial mode in rings/base segments (radialRings/radialBaseSegments),
   // Stained Glass in a target piece count (stainedglassPieceCount),
@@ -1582,7 +1757,7 @@ function setLayoutMode(mode) {
   // unrelated size controls at once.
   el.sharedGridSizeControls.hidden =
     mode === "rubiks" || mode === "radial" || mode === "stainedglass" || mode === "lithophane"
-    || mode === "stringart" || mode === "leadedglass" || mode === "screwart";
+    || mode === "stringart" || mode === "leadedglass" || mode === "screwart" || mode === "stencil";
   // Each mode's panel has a very different height (Classic's is long,
   // Cross-Stitch's is short, etc.), but they all share one scrolling
   // sidebar. Without this, the sidebar's scroll offset carries over
@@ -1980,6 +2155,7 @@ async function generateMosaic() {
 }
 
 function disableGenerationDependentButtons() {
+  for (const b of [el.previewStencilPdfBtn, el.exportStencilPdfBtn, el.exportStencilSvgBtn, el.exportStencilOverviewBtn]) b.disabled = true;
   el.exportPngBtn.disabled = true;
   el.exportPreviewBtn.disabled = true;
   el.exportPosterBtn.disabled = true;
@@ -2930,8 +3106,10 @@ el.previewScrewartGuideBtn.addEventListener("click", () => {
   try {
     const { renderedGridW: screwsWide, renderedGridH: screwsTall, renderedCellSize: cellSize,
       screwartRenderedMinDepthMm: minDepth, screwartRenderedMaxDepthMm: maxDepth } = state;
-    const page1 = renderScrewartBuildSheet(state.screwartDepthGrid, screwsWide, screwsTall, cellSize, makeCanvas);
-    const page2 = renderScrewartInfoPage(state.screwartDepthGrid, screwsWide, screwsTall, minDepth, maxDepth, makeCanvas);
+    const page1 = renderScrewartBuildSheet(state.screwartDepthGrid, screwsWide, screwsTall, cellSize, makeCanvas,
+      { mask: exportMask(screwsWide, screwsTall) });
+    const page2 = renderScrewartInfoPage(state.screwartDepthGrid, screwsWide, screwsTall, minDepth, maxDepth, makeCanvas,
+      { mask: exportMask(screwsWide, screwsTall) });
     openPdfExportPreviewDialog("Preview: Screw Art Build Guide (PDF)", [page1, page2], exportScrewartBuildGuide);
   } catch (err) {
     setStatus(`Error building Screw Art build guide preview: ${err.message}`);
@@ -2944,8 +3122,10 @@ function exportScrewartBuildGuide() {
   try {
     const { renderedGridW: screwsWide, renderedGridH: screwsTall, renderedCellSize: cellSize,
       screwartRenderedMinDepthMm: minDepth, screwartRenderedMaxDepthMm: maxDepth } = state;
-    const page1 = renderScrewartBuildSheet(state.screwartDepthGrid, screwsWide, screwsTall, cellSize, makeCanvas);
-    const page2 = renderScrewartInfoPage(state.screwartDepthGrid, screwsWide, screwsTall, minDepth, maxDepth, makeCanvas);
+    const page1 = renderScrewartBuildSheet(state.screwartDepthGrid, screwsWide, screwsTall, cellSize, makeCanvas,
+      { mask: exportMask(screwsWide, screwsTall) });
+    const page2 = renderScrewartInfoPage(state.screwartDepthGrid, screwsWide, screwsTall, minDepth, maxDepth, makeCanvas,
+      { mask: exportMask(screwsWide, screwsTall) });
 
     const doc = new jspdf.jsPDF({
       unit: "px",
@@ -2966,16 +3146,208 @@ function exportScrewartBuildGuide() {
 el.exportScrewartCsvBtn.addEventListener("click", exportScrewartDepthCsv);
 el.previewScrewartCsvBtn.addEventListener("click", () => {
   if (!state.screwartDepthGrid) return;
-  const csv = buildScrewartDepthCsv(state.screwartDepthGrid, state.renderedGridW, state.renderedGridH);
+  const csv = buildScrewartDepthCsv(state.screwartDepthGrid, state.renderedGridW, state.renderedGridH,
+    exportMask(state.renderedGridW, state.renderedGridH));
   openTextExportPreviewDialog("Preview: Screw Art Depth List (CSV)", csv, exportScrewartDepthCsv);
 });
 
 function exportScrewartDepthCsv() {
   if (!state.screwartDepthGrid) return;
-  const csv = buildScrewartDepthCsv(state.screwartDepthGrid, state.renderedGridW, state.renderedGridH);
+  const csv = buildScrewartDepthCsv(state.screwartDepthGrid, state.renderedGridW, state.renderedGridH,
+    exportMask(state.renderedGridW, state.renderedGridH));
   downloadText(csv, "screw_art_depth_list.csv", "text/csv");
   setStatus("Saved screw_art_depth_list.csv");
 }
+
+// ---------------------------------------------------------------------------
+// Generate -- Stencil (3-6 cut-and-paint layers; see core/stencil.js)
+// ---------------------------------------------------------------------------
+
+const STENCIL_COLOR_IDS = ["stencilColor0", "stencilColor1", "stencilColor2",
+  "stencilColor3", "stencilColor4", "stencilColor5"];
+
+function stencilColors() {
+  return STENCIL_COLOR_IDS.map(id => hexToRgb($(id).value));
+}
+
+function syncStencilColorPickers() {
+  const n = parseInt(el.stencilLayers.value, 10);
+  STENCIL_COLOR_IDS.forEach((id, i) => { $(id).hidden = i >= n; });
+}
+
+function updateStencilEstimate() {
+  const w = parseFloat(el.stencilWidthIn.value) || 8;
+  const aspect = state.sourceCanvas ? state.sourceCanvas.height / state.sourceCanvas.width : 1;
+  el.stencilEstimate.textContent =
+    `Each stencil prints ${formatNumberTrim(w)} \u00d7 ${formatNumberTrim(w * aspect)} in `
+    + `(+ registration margin), one per page.`;
+}
+
+for (const [input, val] of [["stencilLayers", "stencilLayersVal"], ["stencilBgTolerance", "stencilBgToleranceVal"],
+  ["stencilSmooth", "stencilSmoothVal"], ["stencilMinArea", "stencilMinAreaVal"],
+  ["stencilBridge", "stencilBridgeVal"], ["stencilDetail", "stencilDetailVal"]]) {
+  el[input].addEventListener("input", () => { el[val].textContent = el[input].value; });
+}
+el.stencilLayers.addEventListener("input", syncStencilColorPickers);
+el.stencilWidthIn.addEventListener("input", updateStencilEstimate);
+// Colors only affect the preview/overview -- repaint without re-running the pipeline.
+for (const id of [...STENCIL_COLOR_IDS, "stencilBgColor"]) {
+  $(id).addEventListener("input", () => {
+    if (!state.stencil) return;
+    state.stencil.colors = stencilColors();
+    state.stencil.bg = hexToRgb(el.stencilBgColor.value);
+    if (state.renderedMode === "stencil") rerenderCurrent(false);
+  });
+}
+syncStencilColorPickers();
+updateStencilEstimate();
+
+el.stencilGenerateBtn.addEventListener("click", generateStencilMosaic);
+
+async function generateStencilMosaic() {
+  if (!state.sourceCanvas) { setStatus("Load an image first."); return; }
+  const numLayers = parseInt(el.stencilLayers.value, 10);
+  const widthIn = Math.min(60, Math.max(1, parseFloat(el.stencilWidthIn.value) || 8));
+
+  el.stencilGenerateBtn.disabled = true;
+  el.stencilGenerateBtn.textContent = "Generating...";
+  setStatus("Building stencil layers...");
+  await new Promise(r => setTimeout(r, 30)); // let the button state paint first
+
+  try {
+    const { rgb, w, h } = stencilPrepareRgb(state.sourceCanvas, parseInt(el.stencilDetail.value, 10), makeCanvas);
+    const shapeMask = (state.shapeType === "oval" || state.shapeType === "circle")
+      ? shapeMaskGrid(state.shapeType, w, h) : null;
+    const result = buildStencilLayers(rgb, w, h, {
+      numLayers, smooth: parseInt(el.stencilSmooth.value, 10),
+      removeBg: el.stencilRemoveBg.checked, bgTolerance: parseInt(el.stencilBgTolerance.value, 10),
+      minArea: parseInt(el.stencilMinArea.value, 10), bridgeWidth: parseInt(el.stencilBridge.value, 10),
+      overlap: el.stencilOverlap.checked, shapeMask,
+    });
+    state.stencil = {
+      layers: result.layers, w, h, colors: stencilColors(), bg: hexToRgb(el.stencilBgColor.value),
+      widthIn, overlap: el.stencilOverlap.checked,
+    };
+    state.palette = null;
+    state.colorNames = [];
+    state.renderedMode = "stencil";
+    state.renderedCellSize = 1;
+    state.renderedGridW = w;
+    state.renderedGridH = h;
+    state.outputCanvas = renderStencilComposite(result.layers, w, h, state.stencil.colors,
+      state.stencil.bg, 900, makeCanvas);
+    resetSampleDisplay();
+
+    el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
+    for (const b of [el.previewStencilPdfBtn, el.exportStencilPdfBtn, el.exportStencilSvgBtn,
+      el.exportStencilOverviewBtn]) b.disabled = false;
+    clearBrickLayout();
+
+    setViewMode("output");
+    const stats = stencilLayerStats(result.layers).map(s => `${s.layer}: ${s.percent}%`).join("  ");
+    setStatus(`Done — ${numLayers} stencils (coverage ${stats}).`);
+    await snapshotRecentProject();
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    el.stencilGenerateBtn.disabled = false;
+    el.stencilGenerateBtn.textContent = "Generate Mosaic";
+  }
+}
+
+function stencilPrintPages() {
+  const st = state.stencil;
+  return st.layers.map((m, i) => renderStencilPrintPage(m, st.w, st.h, i + 1, st.layers.length,
+    st.widthIn, makeCanvas));
+}
+
+el.previewStencilPdfBtn.addEventListener("click", () => {
+  if (!state.stencil) return;
+  try {
+    openPdfExportPreviewDialog("Preview: Stencils (PDF)", stencilPrintPages(), exportStencilPdf);
+  } catch (err) {
+    setStatus(`Error building stencil preview: ${err.message}`);
+    console.error(err);
+  }
+});
+
+el.exportStencilPdfBtn.addEventListener("click", exportStencilPdf);
+function exportStencilPdf() {
+  if (!state.stencil) return;
+  try {
+    const dpi = 150;
+    const pages = stencilPrintPages();
+    const first = pages[0];
+    const inch = (px) => px / dpi;
+    const doc = new jspdf.jsPDF({
+      unit: "in", format: [inch(first.width), inch(first.height)],
+      orientation: first.width >= first.height ? "landscape" : "portrait",
+    });
+    pages.forEach((page, i) => {
+      if (i > 0) doc.addPage([inch(page.width), inch(page.height)], page.width >= page.height ? "landscape" : "portrait");
+      doc.addImage(page.toDataURL("image/png"), "PNG", 0, 0, inch(page.width), inch(page.height));
+    });
+    doc.save("stencils.pdf");
+    setStatus(`Saved stencils.pdf (${pages.length} pages, real size)`);
+  } catch (err) {
+    setStatus(`Error building stencil PDF: ${err.message}`);
+    console.error(err);
+  }
+}
+
+el.exportStencilSvgBtn.addEventListener("click", async () => {
+  if (!state.stencil) return;
+  try {
+    const st = state.stencil;
+    const zip = new JSZip();
+    st.layers.forEach((m, i) => {
+      zip.file(`stencil_${i + 1}.svg`, stencilSvgText(m, st.w, st.h, i + 1, st.layers.length, st.widthIn));
+    });
+    const blob = await zip.generateAsync({ type: "blob" });
+    downloadBlob(blob, "stencils_svg.zip");
+    setStatus(`Saved stencils_svg.zip (${st.layers.length} SVG files)`);
+  } catch (err) {
+    setStatus(`Error building stencil SVGs: ${err.message}`);
+    console.error(err);
+  }
+});
+
+/** The finished composite on the left, the numbered stencil cards on the
+ *  right over the background color -- the "show your work" sheet. */
+function renderStencilOverview() {
+  const st = state.stencil;
+  const comp = renderStencilComposite(st.layers, st.w, st.h, st.colors, st.bg, 900, makeCanvas);
+  const n = st.layers.length;
+  const cols = n <= 4 ? 2 : 3;
+  const rows = Math.ceil(n / cols);
+  const cardW = 300;
+  const cards = st.layers.map((m, i) => renderStencilSheet(m, st.w, st.h, i + 1, st.colors[i], cardW, makeCanvas));
+  const cardH = cards[0].height;
+  const gap = 24, pad = 40;
+  const gridW = cols * cardW + (cols - 1) * gap;
+  const gridH = rows * cardH + (rows - 1) * gap;
+  const W = pad + comp.width + pad + gridW + pad;
+  const H = pad * 2 + Math.max(comp.height, gridH);
+  const canvas = makeCanvas(W, H);
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = `rgb(${st.bg.join(",")})`;
+  ctx.fillRect(0, 0, W, H);
+  ctx.drawImage(comp, pad, pad);
+  const gx = pad + comp.width + pad;
+  const gy = pad + Math.max(0, (comp.height - gridH) / 2);
+  cards.forEach((c, i) => {
+    ctx.drawImage(c, gx + (i % cols) * (cardW + gap), gy + Math.floor(i / cols) * (cardH + gap));
+  });
+  return canvas;
+}
+
+el.exportStencilOverviewBtn.addEventListener("click", () => {
+  if (!state.stencil) return;
+  renderStencilOverview().toBlob(blob => downloadBlob(blob, "stencil_overview.png"), "image/png");
+  setStatus("Saved stencil_overview.png");
+});
 
 // ---------------------------------------------------------------------------
 // Generate -- String Art (pins around a circular/rectangular frame,
@@ -3229,8 +3601,9 @@ el.previewDiceGuideBtn.addEventListener("click", () => {
     const { renderedGridW: gridW, renderedGridH: gridH, renderedCellSize: cellSize } = state;
     const page1 = renderDiceMosaic(state.dicePipGrid, gridW, gridH, cellSize,
       [255, 255, 255], [20, 20, 20], [255, 255, 255], makeCanvas,
-      { outlineColor: [150, 150, 150] });
-    const page2 = renderDiceKey(state.dicePipGrid, [255, 255, 255], [20, 20, 20], makeCanvas);
+      { outlineColor: [150, 150, 150], mask: exportMask(gridW, gridH) });
+    const page2 = renderDiceKey(state.dicePipGrid, [255, 255, 255], [20, 20, 20], makeCanvas,
+      { mask: exportMask(gridW, gridH) });
     openPdfExportPreviewDialog("Preview: Dice Build Guide (PDF)", [page1, page2], exportDiceBuildGuide);
   } catch (err) {
     setStatus(`Error building dice build guide preview: ${err.message}`);
@@ -3247,8 +3620,9 @@ function exportDiceBuildGuide() {
     // die/pip colors, so the guide is usable printed in black & white.
     const page1 = renderDiceMosaic(state.dicePipGrid, gridW, gridH, cellSize,
       [255, 255, 255], [20, 20, 20], [255, 255, 255], makeCanvas,
-      { outlineColor: [150, 150, 150] });
-    const page2 = renderDiceKey(state.dicePipGrid, [255, 255, 255], [20, 20, 20], makeCanvas);
+      { outlineColor: [150, 150, 150], mask: exportMask(gridW, gridH) });
+    const page2 = renderDiceKey(state.dicePipGrid, [255, 255, 255], [20, 20, 20], makeCanvas,
+      { mask: exportMask(gridW, gridH) });
 
     const doc = new jspdf.jsPDF({
       unit: "px",
@@ -3270,12 +3644,12 @@ el.exportDiceShoppingBtn.addEventListener("click", exportDiceShoppingList);
 el.previewDiceShoppingBtn.addEventListener("click", () => {
   if (!state.dicePipGrid) return;
   openTextExportPreviewDialog("Preview: Dice Shopping List (CSV)",
-    buildDiceShoppingListCsv(state.dicePipGrid, getPrice(el.dicePrice)), exportDiceShoppingList);
+    buildDiceShoppingListCsv(state.dicePipGrid, getPrice(el.dicePrice), exportMask(state.renderedGridW, state.renderedGridH)), exportDiceShoppingList);
 });
 
 function exportDiceShoppingList() {
   if (!state.dicePipGrid) return;
-  downloadText(buildDiceShoppingListCsv(state.dicePipGrid, getPrice(el.dicePrice)), "dice_shopping_list.csv", "text/csv");
+  downloadText(buildDiceShoppingListCsv(state.dicePipGrid, getPrice(el.dicePrice), exportMask(state.renderedGridW, state.renderedGridH)), "dice_shopping_list.csv", "text/csv");
   setStatus("Saved dice_shopping_list.csv");
 }
 
@@ -3358,8 +3732,10 @@ el.previewRubiksGuideBtn.addEventListener("click", () => {
   if (!state.rubiksGrid) return;
   try {
     const { renderedGridW: gridW, renderedGridH: gridH, renderedCellSize: cellSize } = state;
-    const page1 = renderRubiksBuildSheet(state.rubiksGrid, gridW, gridH, cellSize, makeCanvas);
-    const page2 = renderRubiksKey(state.rubiksGrid, state.rubiksPalette, gridW, gridH, makeCanvas);
+    const page1 = renderRubiksBuildSheet(state.rubiksGrid, gridW, gridH, cellSize, makeCanvas,
+      { cubeMask: rubiksCubeMaskForExport() });
+    const page2 = renderRubiksKey(state.rubiksGrid, state.rubiksPalette, gridW, gridH, makeCanvas,
+      { cubeMask: rubiksCubeMaskForExport() });
     openPdfExportPreviewDialog("Preview: Cube Build Guide (PDF)", [page1, page2], exportRubiksBuildGuide);
   } catch (err) {
     setStatus(`Error building Rubik's Cube build guide preview: ${err.message}`);
@@ -3371,8 +3747,10 @@ function exportRubiksBuildGuide() {
   if (!state.rubiksGrid) return;
   try {
     const { renderedGridW: gridW, renderedGridH: gridH, renderedCellSize: cellSize } = state;
-    const page1 = renderRubiksBuildSheet(state.rubiksGrid, gridW, gridH, cellSize, makeCanvas);
-    const page2 = renderRubiksKey(state.rubiksGrid, state.rubiksPalette, gridW, gridH, makeCanvas);
+    const page1 = renderRubiksBuildSheet(state.rubiksGrid, gridW, gridH, cellSize, makeCanvas,
+      { cubeMask: rubiksCubeMaskForExport() });
+    const page2 = renderRubiksKey(state.rubiksGrid, state.rubiksPalette, gridW, gridH, makeCanvas,
+      { cubeMask: rubiksCubeMaskForExport() });
 
     const doc = new jspdf.jsPDF({
       unit: "px",
@@ -3394,14 +3772,14 @@ el.exportRubiksShoppingBtn.addEventListener("click", exportRubiksShoppingList);
 el.previewRubiksShoppingBtn.addEventListener("click", () => {
   if (!state.rubiksGrid) return;
   const csv = buildRubiksShoppingListCsv(state.rubiksGrid, state.rubiksPalette, state.renderedGridW, state.renderedGridH,
-    getPrice(el.rubiksPrice));
+    getPrice(el.rubiksPrice), rubiksCubeMaskForExport());
   openTextExportPreviewDialog("Preview: Cube Shopping List (CSV)", csv, exportRubiksShoppingList);
 });
 
 function exportRubiksShoppingList() {
   if (!state.rubiksGrid) return;
   const csv = buildRubiksShoppingListCsv(state.rubiksGrid, state.rubiksPalette, state.renderedGridW, state.renderedGridH,
-    getPrice(el.rubiksPrice));
+    getPrice(el.rubiksPrice), rubiksCubeMaskForExport());
   downloadText(csv, "rubiks_cube_shopping_list.csv", "text/csv");
   setStatus("Saved rubiks_cube_shopping_list.csv");
 }
@@ -3615,7 +3993,8 @@ el.previewCrossStitchPatternBtn.addEventListener("click", () => {
     const patternCellSize = 22;
     const maxStitchesPerPage = 50;
 
-    const symbolMap = crossStitchSymbolMap(state.crossStitchGrid);
+    const csMask = exportMask(gridW, gridH);
+    const symbolMap = crossStitchSymbolMap(state.crossStitchGrid, csMask);
     const panels = splitIntoPanels(state.crossStitchGrid, gridW, gridH, maxStitchesPerPage, maxStitchesPerPage);
     const nPanelRows = Math.max(...panels.map(p => p.panelRow)) + 1;
     const nPanelCols = Math.max(...panels.map(p => p.panelCol)) + 1;
@@ -3624,10 +4003,11 @@ el.previewCrossStitchPatternBtn.addEventListener("click", () => {
       const label = `Page ${p.panelRow + 1},${p.panelCol + 1} of ${nPanelRows}x${nPanelCols}  `
         + `(stitches ${p.colStart + 1}-${p.colEnd} x ${p.rowStart + 1}-${p.rowEnd})`;
       return renderCrossStitchPatternPage(p.grid, p.width, p.height, symbolMap,
-        p.rowStart, p.colStart, label, patternCellSize, makeCanvas);
+        p.rowStart, p.colStart, label, patternCellSize, makeCanvas,
+        csMask ? panelMask(csMask, gridW, p) : null);
     });
 
-    const counts = dmcColorCounts(state.crossStitchGrid);
+    const counts = dmcColorCounts(state.crossStitchGrid, exportMask(state.renderedGridW, state.renderedGridH));
     pages.push(renderCrossStitchLegendPage(counts, symbolMap, makeCanvas));
 
     openPdfExportPreviewDialog("Preview: Pattern Chart (PDF)", pages, exportCrossStitchPattern);
@@ -3644,7 +4024,8 @@ function exportCrossStitchPattern() {
     const patternCellSize = 22;
     const maxStitchesPerPage = 50;
 
-    const symbolMap = crossStitchSymbolMap(state.crossStitchGrid);
+    const csMask = exportMask(gridW, gridH);
+    const symbolMap = crossStitchSymbolMap(state.crossStitchGrid, csMask);
     const panels = splitIntoPanels(state.crossStitchGrid, gridW, gridH, maxStitchesPerPage, maxStitchesPerPage);
     const nPanelRows = Math.max(...panels.map(p => p.panelRow)) + 1;
     const nPanelCols = Math.max(...panels.map(p => p.panelCol)) + 1;
@@ -3653,10 +4034,11 @@ function exportCrossStitchPattern() {
       const label = `Page ${p.panelRow + 1},${p.panelCol + 1} of ${nPanelRows}x${nPanelCols}  `
         + `(stitches ${p.colStart + 1}-${p.colEnd} x ${p.rowStart + 1}-${p.rowEnd})`;
       return renderCrossStitchPatternPage(p.grid, p.width, p.height, symbolMap,
-        p.rowStart, p.colStart, label, patternCellSize, makeCanvas);
+        p.rowStart, p.colStart, label, patternCellSize, makeCanvas,
+        csMask ? panelMask(csMask, gridW, p) : null);
     });
 
-    const counts = dmcColorCounts(state.crossStitchGrid);
+    const counts = dmcColorCounts(state.crossStitchGrid, exportMask(state.renderedGridW, state.renderedGridH));
     pages.push(renderCrossStitchLegendPage(counts, symbolMap, makeCanvas));
 
     const doc = new jspdf.jsPDF({
@@ -3695,12 +4077,14 @@ el.exportCrossStitchShoppingBtn.addEventListener("click", exportCrossStitchShopp
 el.previewCrossStitchShoppingBtn.addEventListener("click", () => {
   if (!state.crossStitchGrid) return;
   openTextExportPreviewDialog("Preview: Floss Shopping List (CSV)",
-    buildCrossStitchShoppingListCsv(state.crossStitchGrid, getPrice(el.crossstitchPrice)), exportCrossStitchShoppingList);
+    buildCrossStitchShoppingListCsv(state.crossStitchGrid, getPrice(el.crossstitchPrice), 800,
+    exportMask(state.renderedGridW, state.renderedGridH)), exportCrossStitchShoppingList);
 });
 
 function exportCrossStitchShoppingList() {
   if (!state.crossStitchGrid) return;
-  downloadText(buildCrossStitchShoppingListCsv(state.crossStitchGrid, getPrice(el.crossstitchPrice)),
+  downloadText(buildCrossStitchShoppingListCsv(state.crossStitchGrid, getPrice(el.crossstitchPrice), 800,
+    exportMask(state.renderedGridW, state.renderedGridH)),
     "cross_stitch_shopping_list.csv", "text/csv");
   setStatus("Saved cross_stitch_shopping_list.csv");
 }
@@ -3912,7 +4296,8 @@ el.previewFoundObjectJsonBtn.addEventListener("click", () => {
   if (!state.foundObjectQuantizedGrid) return;
   const json = buildGridJson(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
     state.foundObjectPalette, "square",
-    { sourceName: state.sourceFileName, names: foundObjectColorNames(), extraMeta: { mode: "found_object" } });
+    { sourceName: state.sourceFileName, names: foundObjectColorNames(), extraMeta: { mode: "found_object" },
+      mask: exportMask(state.gridW, state.gridH) });
   openTextExportPreviewDialog("Preview: Object Data (JSON)", json, exportFoundObjectJson);
 });
 
@@ -3920,7 +4305,8 @@ function exportFoundObjectJson() {
   if (!state.foundObjectQuantizedGrid) return;
   const json = buildGridJson(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
     state.foundObjectPalette, "square",
-    { sourceName: state.sourceFileName, names: foundObjectColorNames(), extraMeta: { mode: "found_object" } });
+    { sourceName: state.sourceFileName, names: foundObjectColorNames(), extraMeta: { mode: "found_object" },
+      mask: exportMask(state.gridW, state.gridH) });
   downloadText(json, "found_object_data.json", "application/json");
   setStatus("Saved found_object_data.json");
 }
@@ -3930,9 +4316,9 @@ el.previewFoundObjectCsvBtn.addEventListener("click", () => {
   if (!state.foundObjectQuantizedGrid) return;
   const names = foundObjectColorNames();
   const gridCsv = buildGridCsv(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
-    state.foundObjectPalette, names);
+    state.foundObjectPalette, names, { mask: exportMask(state.gridW, state.gridH) });
   const colorsCsv = buildPaletteCsv(state.foundObjectQuantizedGrid, state.foundObjectPalette, names,
-    getPrice(el.foundobjectPrice));
+    getPrice(el.foundobjectPrice), exportMask(state.gridW, state.gridH));
   const content = `--- found_object_data.csv (per-cell grid) ---\n${gridCsv}\n`
     + `--- found_object_data_colors.csv (object totals) ---\n${colorsCsv}`;
   openTextExportPreviewDialog("Preview: Object Data (CSV)", content, exportFoundObjectCsv);
@@ -3942,9 +4328,11 @@ function exportFoundObjectCsv() {
   if (!state.foundObjectQuantizedGrid) return;
   const names = foundObjectColorNames();
   downloadText(buildGridCsv(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
-    state.foundObjectPalette, names), "found_object_data.csv", "text/csv");
+    state.foundObjectPalette, names, { mask: exportMask(state.gridW, state.gridH) }),
+    "found_object_data.csv", "text/csv");
   downloadText(buildPaletteCsv(state.foundObjectQuantizedGrid, state.foundObjectPalette, names,
-    getPrice(el.foundobjectPrice)), "found_object_data_colors.csv", "text/csv");
+    getPrice(el.foundobjectPrice), exportMask(state.gridW, state.gridH)),
+    "found_object_data_colors.csv", "text/csv");
   setStatus("Saved found_object_data.csv and found_object_data_colors.csv");
 }
 
@@ -3955,7 +4343,7 @@ el.previewFoundObjectPdfBtn.addEventListener("click", () => {
     const page1 = renderPaintByNumber(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
       state.foundObjectPalette, "square", state.renderedCellSize, makeCanvas);
     const names = foundObjectColorNames();
-    const counts = colorCounts(state.foundObjectQuantizedGrid, state.foundObjectPalette, names);
+    const counts = colorCounts(state.foundObjectQuantizedGrid, state.foundObjectPalette, names, exportMask(state.gridW, state.gridH));
     const page2 = renderColorKey(state.foundObjectPalette, names, counts, makeCanvas);
     openPdfExportPreviewDialog("Preview: Build Guide (PDF)", [page1, page2], exportFoundObjectPdf);
   } catch (err) {
@@ -3970,7 +4358,7 @@ function exportFoundObjectPdf() {
     const page1 = renderPaintByNumber(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
       state.foundObjectPalette, "square", state.renderedCellSize, makeCanvas);
     const names = foundObjectColorNames();
-    const counts = colorCounts(state.foundObjectQuantizedGrid, state.foundObjectPalette, names);
+    const counts = colorCounts(state.foundObjectQuantizedGrid, state.foundObjectPalette, names, exportMask(state.gridW, state.gridH));
     const page2 = renderColorKey(state.foundObjectPalette, names, counts, makeCanvas);
 
     const doc = new jspdf.jsPDF({
@@ -4740,14 +5128,14 @@ el.exportJsonBtn.addEventListener("click", exportJson);
 el.previewJsonBtn.addEventListener("click", () => {
   if (!state.quantizedGrid) return;
   const json = buildGridJson(state.quantizedGrid, state.gridW, state.gridH, state.palette, state.renderedShape,
-    { sourceName: state.sourceFileName, names: state.colorNames });
+    { sourceName: state.sourceFileName, names: state.colorNames, mask: exportMask(state.gridW, state.gridH) });
   openTextExportPreviewDialog("Preview: Grid Data (JSON)", json, exportJson);
 });
 
 function exportJson() {
   if (!state.quantizedGrid) return;
   const json = buildGridJson(state.quantizedGrid, state.gridW, state.gridH, state.palette, state.renderedShape,
-    { sourceName: state.sourceFileName, names: state.colorNames });
+    { sourceName: state.sourceFileName, names: state.colorNames, mask: exportMask(state.gridW, state.gridH) });
   downloadText(json, "mosaic.json", "application/json");
   setStatus("Saved mosaic.json");
 }
@@ -4755,8 +5143,10 @@ function exportJson() {
 el.exportCsvBtn.addEventListener("click", exportCsv);
 el.previewCsvBtn.addEventListener("click", () => {
   if (!state.quantizedGrid) return;
-  const gridCsv = buildGridCsv(state.quantizedGrid, state.gridW, state.gridH, state.palette, state.colorNames);
-  const colorsCsv = buildPaletteCsv(state.quantizedGrid, state.palette, state.colorNames, getPrice(el.classicPrice));
+  const gridCsv = buildGridCsv(state.quantizedGrid, state.gridW, state.gridH, state.palette, state.colorNames,
+    { mask: exportMask(state.gridW, state.gridH) });
+  const colorsCsv = buildPaletteCsv(state.quantizedGrid, state.palette, state.colorNames, getPrice(el.classicPrice),
+    exportMask(state.gridW, state.gridH));
   const content = `--- mosaic.csv (per-cell grid) ---\n${gridCsv}\n`
     + `--- mosaic_colors.csv (color totals) ---\n${colorsCsv}`;
   openTextExportPreviewDialog("Preview: Grid Data (CSV)", content, exportCsv);
@@ -4764,9 +5154,11 @@ el.previewCsvBtn.addEventListener("click", () => {
 
 function exportCsv() {
   if (!state.quantizedGrid) return;
-  downloadText(buildGridCsv(state.quantizedGrid, state.gridW, state.gridH, state.palette, state.colorNames),
+  downloadText(buildGridCsv(state.quantizedGrid, state.gridW, state.gridH, state.palette, state.colorNames,
+    { mask: exportMask(state.gridW, state.gridH) }),
     "mosaic.csv", "text/csv");
-  downloadText(buildPaletteCsv(state.quantizedGrid, state.palette, state.colorNames, getPrice(el.classicPrice)),
+  downloadText(buildPaletteCsv(state.quantizedGrid, state.palette, state.colorNames, getPrice(el.classicPrice),
+    exportMask(state.gridW, state.gridH)),
     "mosaic_colors.csv", "text/csv");
   setStatus("Saved mosaic.csv and mosaic_colors.csv");
 }
@@ -4853,7 +5245,7 @@ async function snapshotRecentProject() {
   try {
     const defaultName = (state.sourceFileName || "Untitled").replace(/\.[^./\\]+$/, "");
     state.currentProjectId = await recentProjects.saveSnapshot(
-      state.currentProjectId, defaultName, state.renderedMode, state.sourceCanvas,
+      state.currentProjectId, defaultName, state.renderedMode, state.originalCanvas || state.sourceCanvas,
       state.sourceFileName, collectSettings(), state.outputCanvas);
   } catch (err) {
     // Recent Projects is a convenience, never a reason to interrupt a
@@ -5151,6 +5543,7 @@ function generateForCurrentMode() {
     case "lithophane": return generateLithophaneMosaic();
     case "stringart": return generateStringartMosaic();
     case "screwart": return generateScrewartMosaic();
+    case "stencil": return generateStencilMosaic();
     default: return generateMosaic();
   }
 }
@@ -5272,6 +5665,10 @@ function collectSettings() {
       cubesWide: parseInt(el.cubesWide.value, 10),
       cubesTall: parseInt(el.cubesTall.value, 10),
       lockAspectRubiks: el.lockAspectRubiks.checked,
+      lockAspectScrewart: el.lockAspectScrewart.checked,
+      cropBox: state.cropBox,
+      shapeBox: state.shapeBox,
+      shapeType: state.shapeType,
       rubiksIncludeBlack: el.rubiksIncludeBlack.checked,
       rubiksColorMode: state.rubiksColorMode,
       rubiksColorMap: Object.fromEntries(
@@ -5313,6 +5710,18 @@ function collectSettings() {
       screwartMinDepthMm: getScrewartFloat(el.screwartMinDepth, 0),
       screwartMaxDepthMm: getScrewartFloat(el.screwartMaxDepth, 12),
       screwartInvert: el.screwartInvert.checked,
+
+      stencilLayers: parseInt(el.stencilLayers.value, 10),
+      stencilColors: STENCIL_COLOR_IDS.map(id => $(id).value),
+      stencilBgColor: el.stencilBgColor.value,
+      stencilRemoveBg: el.stencilRemoveBg.checked,
+      stencilBgTolerance: parseInt(el.stencilBgTolerance.value, 10),
+      stencilSmooth: parseInt(el.stencilSmooth.value, 10),
+      stencilMinArea: parseInt(el.stencilMinArea.value, 10),
+      stencilBridge: parseInt(el.stencilBridge.value, 10),
+      stencilDetail: parseInt(el.stencilDetail.value, 10),
+      stencilOverlap: el.stencilOverlap.checked,
+      stencilWidthIn: parseFloat(el.stencilWidthIn.value) || 8,
 
       stringartShape: [...el.stringartShapeSeg.children].find(b => b.classList.contains("active")).dataset.shape,
       stringartNumPins: parseInt(el.stringartPins.value, 10),
@@ -5403,6 +5812,21 @@ function applySettings(data) {
   if (Number.isFinite(s.cubesWide)) { el.cubesWide.value = s.cubesWide; el.cubesWideVal.textContent = s.cubesWide; }
   if (Number.isFinite(s.cubesTall)) { el.cubesTall.value = s.cubesTall; el.cubesTallVal.textContent = s.cubesTall; }
   if (typeof s.lockAspectRubiks === "boolean") el.lockAspectRubiks.checked = s.lockAspectRubiks;
+  if (typeof s.lockAspectScrewart === "boolean") el.lockAspectScrewart.checked = s.lockAspectScrewart;
+  {
+    const okBox = (b) => Array.isArray(b) && b.length === 4 && b.every(Number.isFinite);
+    const cropChanged = "cropBox" in s || "shapeBox" in s || "shapeType" in s;
+    if (cropChanged) {
+      state.cropBox = okBox(s.cropBox) ? s.cropBox : null;
+      state.shapeBox = okBox(s.shapeBox) ? s.shapeBox : null;
+      state.shapeType = ["none", "rect", "oval", "circle"].includes(s.shapeType) ? s.shapeType : "none";
+      if (state.originalCanvas) {
+        state.sourceCanvas = applyCropAndShape(state.originalCanvas, makeCanvas, state.cropBox,
+          state.shapeType === "none" ? null : state.shapeBox);
+        updateCropShapeSummary();
+      }
+    }
+  }
   if (typeof s.rubiksIncludeBlack === "boolean") el.rubiksIncludeBlack.checked = s.rubiksIncludeBlack;
   if (s.rubiksColorMode === "ramp" || s.rubiksColorMode === "nearest") setRubiksColorMode(s.rubiksColorMode);
   if (s.rubiksColorMap && typeof s.rubiksColorMap === "object") {
@@ -5485,6 +5909,22 @@ function applySettings(data) {
   if (Number.isFinite(s.screwartMaxDepthMm)) el.screwartMaxDepth.value = s.screwartMaxDepthMm;
   if (typeof s.screwartInvert === "boolean") el.screwartInvert.checked = s.screwartInvert;
   updateScrewartSizeEstimate();
+
+  for (const [key, input, val] of [["stencilLayers", "stencilLayers", "stencilLayersVal"],
+    ["stencilBgTolerance", "stencilBgTolerance", "stencilBgToleranceVal"],
+    ["stencilSmooth", "stencilSmooth", "stencilSmoothVal"], ["stencilMinArea", "stencilMinArea", "stencilMinAreaVal"],
+    ["stencilBridge", "stencilBridge", "stencilBridgeVal"], ["stencilDetail", "stencilDetail", "stencilDetailVal"]]) {
+    if (Number.isFinite(s[key])) { el[input].value = s[key]; el[val].textContent = el[input].value; }
+  }
+  if (Array.isArray(s.stencilColors)) {
+    s.stencilColors.slice(0, 6).forEach((c, i) => { if (/^#[0-9a-f]{6}$/i.test(c)) $(STENCIL_COLOR_IDS[i]).value = c; });
+  }
+  if (/^#[0-9a-f]{6}$/i.test(s.stencilBgColor || "")) el.stencilBgColor.value = s.stencilBgColor;
+  if (typeof s.stencilRemoveBg === "boolean") el.stencilRemoveBg.checked = s.stencilRemoveBg;
+  if (typeof s.stencilOverlap === "boolean") el.stencilOverlap.checked = s.stencilOverlap;
+  if (Number.isFinite(s.stencilWidthIn)) el.stencilWidthIn.value = s.stencilWidthIn;
+  syncStencilColorPickers();
+  updateStencilEstimate();
 
   if (s.stringartShape === "circle" || s.stringartShape === "rect") {
     [...el.stringartShapeSeg.children].forEach(b => b.classList.toggle("active", b.dataset.shape === s.stringartShape));

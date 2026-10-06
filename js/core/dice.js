@@ -183,8 +183,10 @@ export function renderDiceMosaic(pipGrid, gridW, gridH, cellSize, dieColor, pipC
   const radius = Math.max(1, cellSize * cornerRadiusFrac);
   const pipR = Math.max(1, cellSize * pipRadiusFrac);
 
+  const mask = options.mask || null;
   for (let row = 0; row < gridH; row++) {
     for (let col = 0; col < gridW; col++) {
+      if (mask && !mask[row * gridW + col]) continue; // outside Crop & Shape: no die
       const x0 = col * cellSize, y0 = row * cellSize;
       const fx0 = x0 + gap, fy0 = y0 + gap;
       const faceW = cellSize - 2 * gap, faceH = cellSize - 2 * gap;
@@ -211,9 +213,12 @@ export function renderDiceMosaic(pipGrid, gridW, gridH, cellSize, dieColor, pipC
 }
 
 /** How many cells use each pip value (1-6) -- the dice shopping list. */
-export function diceCounts(pipGrid) {
+export function diceCounts(pipGrid, mask = null) {
   const counts = [0, 0, 0, 0, 0, 0];
-  for (let i = 0; i < pipGrid.length; i++) counts[pipGrid[i] - 1]++;
+  for (let i = 0; i < pipGrid.length; i++) {
+    if (mask && !mask[i]) continue;
+    counts[pipGrid[i] - 1]++;
+  }
   return counts.map((count, i) => ({ pips: i + 1, count }));
 }
 
@@ -224,7 +229,7 @@ export function renderDiceKey(pipGrid, dieColor, pipColor, createCanvasFn, optio
     bgColor = [255, 255, 255], textColor = [20, 20, 20], lineColor = [210, 210, 210],
     swatchSize = 60,
   } = options;
-  const counts = new Map(diceCounts(pipGrid).map(c => [c.pips, c.count]));
+  const counts = new Map(diceCounts(pipGrid, options.mask || null).map(c => [c.pips, c.count]));
   const pad = 20;
   const rowH = swatchSize + 14;
   const imgW = 420;

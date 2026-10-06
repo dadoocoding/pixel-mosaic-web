@@ -29,6 +29,11 @@
     <input type="file" id="fileInput" accept="image/*" hidden>
 
     <div class="button-row">
+      <button id="cropShapeBtn" disabled>Crop &amp; Shape...</button>
+    </div>
+    <p class="hint" id="cropShapeSummary"></p>
+
+    <div class="button-row">
       <button id="recentProjectsBtn">Recent Projects...</button>
     </div>
     <div class="button-row">
@@ -101,6 +106,7 @@
       <button data-layout="lithophane" type="button">Lithophane</button>
       <button data-layout="stringart" type="button">String Art</button>
       <button data-layout="screwart" type="button">Screw Art</button>
+      <button data-layout="stencil" type="button">Stencil</button>
     </div>
 
     <div id="classicPanel">
@@ -619,6 +625,8 @@
       <label for="screwsTall">Screws tall</label>
       <div class="slider-row"><input type="range" id="screwsTall" min="10" max="150" value="60"><span class="slider-val" id="screwsTallVal">60</span></div>
 
+      <label class="checkbox-label"><input type="checkbox" id="lockAspectScrewart" checked> Lock aspect ratio to source image</label>
+
       <label>Min / max depth (mm from flush)</label>
       <div class="piece-size-row">
         <input type="number" id="screwartMinDepth" min="0" step="0.1" value="0">
@@ -640,6 +648,66 @@
       <div class="button-row two-up">
         <button id="previewScrewartCsvBtn" disabled>Preview...</button>
         <button id="exportScrewartCsvBtn" disabled>Save Depth List (CSV)</button>
+      </div>
+    </div>
+
+    <div id="stencilPanel" hidden>
+      <p class="hint">Cut-and-paint stencils: the photo is split into 3&ndash;6
+        tone layers. Stencil 1 is the whole subject in the darkest color;
+        each later stencil is a lighter band painted on top (or only its own
+        band if you turn overlap off). Print the stencils at real size or
+        export SVGs for a cutting machine. Number of colors and the shared
+        Grid / Cell Size controls above have no effect here.</p>
+
+      <label for="stencilLayers">Stencils / colors</label>
+      <div class="slider-row"><input type="range" id="stencilLayers" min="3" max="6" value="4"><span class="slider-val" id="stencilLayersVal">4</span></div>
+
+      <label>Paint colors (preview) &amp; background</label>
+      <div class="stencil-colors" id="stencilColorRow">
+        <input type="color" id="stencilColor0" value="#141414" title="Stencil 1 color">
+        <input type="color" id="stencilColor1" value="#b22222" title="Stencil 2 color">
+        <input type="color" id="stencilColor2" value="#e6b446" title="Stencil 3 color">
+        <input type="color" id="stencilColor3" value="#f0f0eb" title="Stencil 4 color">
+        <input type="color" id="stencilColor4" value="#78aad2" title="Stencil 5 color">
+        <input type="color" id="stencilColor5" value="#5a8c50" title="Stencil 6 color">
+        <input type="color" id="stencilBgColor" value="#a8cfe6" title="Background color">
+      </div>
+
+      <label class="checkbox-label"><input type="checkbox" id="stencilRemoveBg" checked> Remove background (detect from photo edges)</label>
+      <label for="stencilBgTolerance">Background tolerance</label>
+      <div class="slider-row"><input type="range" id="stencilBgTolerance" min="5" max="120" value="40"><span class="slider-val" id="stencilBgToleranceVal">40</span></div>
+
+      <label for="stencilSmooth">Smoothing</label>
+      <div class="slider-row"><input type="range" id="stencilSmooth" min="0" max="8" value="3"><span class="slider-val" id="stencilSmoothVal">3</span></div>
+
+      <label for="stencilMinArea">Minimum feature size (px)</label>
+      <div class="slider-row"><input type="range" id="stencilMinArea" min="1" max="80" value="12"><span class="slider-val" id="stencilMinAreaVal">12</span></div>
+
+      <label for="stencilBridge">Bridges for floating islands (0 = off)</label>
+      <div class="slider-row"><input type="range" id="stencilBridge" min="0" max="8" value="0"><span class="slider-val" id="stencilBridgeVal">0</span></div>
+
+      <label for="stencilDetail">Detail (working resolution)</label>
+      <div class="slider-row"><input type="range" id="stencilDetail" min="120" max="600" step="20" value="320"><span class="slider-val" id="stencilDetailVal">320</span></div>
+
+      <label class="checkbox-label"><input type="checkbox" id="stencilOverlap" checked> Paint over previous layers (forgives misalignment)</label>
+
+      <label>Printed stencil width (inches)</label>
+      <div class="piece-size-row">
+        <input type="number" id="stencilWidthIn" min="1" max="60" step="0.5" value="8">
+      </div>
+
+      <p class="hint" id="stencilEstimate"></p>
+
+      <div class="button-row"><button id="stencilGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <label>Export</label>
+      <div class="button-row two-up">
+        <button id="previewStencilPdfBtn" disabled>Preview...</button>
+        <button id="exportStencilPdfBtn" disabled>Save Stencils (PDF)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="exportStencilSvgBtn" disabled>Save Stencils (SVG zip)</button>
+        <button id="exportStencilOverviewBtn" disabled>Save Overview (PNG)</button>
       </div>
     </div>
 

@@ -293,7 +293,13 @@ export function remapRubiksColors(baseGrid, colorMap) {
  * move to the next block. */
 export function renderRubiksBuildSheet(grid, gridW, gridH, cellSize, createCanvasFn, options = {}) {
   const { bgColor = [255, 255, 255], lineColor = [90, 90, 90], cubeLineColor = [20, 20, 20],
-          textColor = [20, 20, 20] } = options;
+          textColor = [20, 20, 20], cubeMask = null } = options;
+  // cubeMask: optional flat per-CUBE bool array (floor(gridH/3) x floor(gridW/3));
+  // cubes outside the Crop & Shape oval/circle are left blank.
+  const maskCubeW = Math.max(1, Math.floor(gridW / 3));
+  const maskCubeH = Math.max(1, Math.floor(gridH / 3));
+  const cubeIn = (cr, cc) => !cubeMask ||
+    !!cubeMask[Math.min(cr, maskCubeH - 1) * maskCubeW + Math.min(cc, maskCubeW - 1)];
 
   const imgW = gridW * cellSize, imgH = gridH * cellSize;
   const canvas = createCanvasFn(imgW, imgH);
@@ -310,6 +316,7 @@ export function renderRubiksBuildSheet(grid, gridW, gridH, cellSize, createCanva
 
   for (let row = 0; row < gridH; row++) {
     for (let col = 0; col < gridW; col++) {
+      if (!cubeIn(Math.floor(row / 3), Math.floor(col / 3))) continue;
       const x0 = col * cellSize, y0 = row * cellSize;
       ctx.strokeRect(x0 + 0.5, y0 + 0.5, cellSize, cellSize);
       const rgb = grid[row * gridW + col];
@@ -330,6 +337,7 @@ export function renderRubiksBuildSheet(grid, gridW, gridH, cellSize, createCanva
   ctx.textBaseline = "top";
   for (let cr = 0; cr < cubeH; cr++) {
     for (let cc = 0; cc < cubeW; cc++) {
+      if (!cubeIn(cr, cc)) continue;
       const x0 = cc * 3 * cellSize, y0 = cr * 3 * cellSize;
       ctx.strokeRect(x0 + blockBorderWidth / 2, y0 + blockBorderWidth / 2,
         3 * cellSize - blockBorderWidth, 3 * cellSize - blockBorderWidth);
@@ -346,10 +354,22 @@ export function renderRubiksBuildSheet(grid, gridW, gridH, cellSize, createCanva
  * rubiksNamesForPalette rather than hardcoded, so either length works. */
 export function renderRubiksKey(grid, palette, gridW, gridH, createCanvasFn, options = {}) {
   const { swatchSize = 50, bgColor = [255, 255, 255], textColor = [20, 20, 20],
-          lineColor = [210, 210, 210] } = options;
+          lineColor = [210, 210, 210], cubeMask = null } = options;
   const names = rubiksNamesForPalette(palette);
-  const counts = colorCounts(grid, palette, names);
-  const cubeTotal = rubiksCubeCount(gridW, gridH);
+  let stickerMask = null;
+  let cubeTotal = rubiksCubeCount(gridW, gridH);
+  if (cubeMask) {
+    const cw = Math.max(1, Math.floor(gridW / 3)), ch = Math.max(1, Math.floor(gridH / 3));
+    stickerMask = new Uint8Array(gridW * gridH);
+    for (let r = 0; r < gridH; r++) {
+      for (let c = 0; c < gridW; c++) {
+        stickerMask[r * gridW + c] = cubeMask[Math.min(Math.floor(r / 3), ch - 1) * cw + Math.min(Math.floor(c / 3), cw - 1)] ? 1 : 0;
+      }
+    }
+    cubeTotal = 0;
+    for (let i = 0; i < cubeMask.length; i++) if (cubeMask[i]) cubeTotal++;
+  }
+  const counts = colorCounts(grid, palette, names, stickerMask);
 
   const pad = 20;
   const rowH = swatchSize + 14;

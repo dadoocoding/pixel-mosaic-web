@@ -44,7 +44,7 @@ function buildNameLookup(palette, names) {
 
 export function buildGridJson(grid, gridW, gridH, palette, shape, options = {}) {
   const { sourceName = "", names = [], rowOffset = 0, colOffset = 0,
-          includeGlobalCoords = false, extraMeta = null } = options;
+          includeGlobalCoords = false, extraMeta = null, mask = null } = options;
   const nameLookup = buildNameLookup(palette, names);
 
   // row/col are reported 1-indexed (row 1, col 1 = top-left) so they read
@@ -53,6 +53,7 @@ export function buildGridJson(grid, gridW, gridH, palette, shape, options = {}) 
   const cells = [];
   for (let row = 0; row < gridH; row++) {
     for (let col = 0; col < gridW; col++) {
+      if (mask && !mask[row * gridW + col]) continue;
       const rgb = grid[row * gridW + col];
       const hex = rgbToHex(rgb);
       const cell = { row: row + 1, col: col + 1, rgb, hex, name: nameLookup.get(hex) || "" };
@@ -70,14 +71,14 @@ export function buildGridJson(grid, gridW, gridH, palette, shape, options = {}) 
     grid_width: gridW,
     grid_height: gridH,
     num_colors: palette.length,
-    palette: colorCounts(grid, palette, names),
+    palette: colorCounts(grid, palette, names, mask),
     cells,
   };
   return JSON.stringify(extraMeta ? { ...extraMeta, ...data } : data, null, 2);
 }
 
 export function buildGridCsv(grid, gridW, gridH, palette = null, names = [], options = {}) {
-  const { rowOffset = 0, colOffset = 0, includeGlobalCoords = false } = options;
+  const { rowOffset = 0, colOffset = 0, includeGlobalCoords = false, mask = null } = options;
   const nameLookup = palette ? buildNameLookup(palette, names) : new Map();
 
   const headers = ["row", "col"];
@@ -89,6 +90,7 @@ export function buildGridCsv(grid, gridW, gridH, palette = null, names = [], opt
   const rows = [];
   for (let row = 0; row < gridH; row++) {
     for (let col = 0; col < gridW; col++) {
+      if (mask && !mask[row * gridW + col]) continue;
       const [r, g, b] = grid[row * gridW + col];
       const hex = rgbToHex([r, g, b]);
       const rowData = [row + 1, col + 1];
@@ -109,8 +111,8 @@ export function buildGridCsv(grid, gridW, gridH, palette = null, names = [], opt
  * bead or per brick) -- appends "unit_price"/"cost" columns and a trailing
  * TOTAL row. Left undefined, the CSV is unchanged from before this option
  * existed. */
-export function buildPaletteCsv(grid, palette, names = [], unitPrice = null) {
-  const counts = colorCounts(grid, palette, names);
+export function buildPaletteCsv(grid, palette, names = [], unitPrice = null, mask = null) {
+  const counts = colorCounts(grid, palette, names, mask);
   const matches = nearestPaintMatchesAllBrands(counts.map(c => c.rgb));
   const headers = ["color_number", "hex", "r", "g", "b", "name", "count",
     "sherwin_williams_match", "behr_match", "krylon_match", "best_match"];
@@ -429,11 +431,11 @@ export function buildAdaptiveShoppingListCsv(leaves, unitPrice = null) {
 /** Dice mode's shopping list -- how many dice show each face (1-6).
  * unitPrice, if given, is a rough price per die -- appends
  * "unit_price"/"cost" columns and a trailing TOTAL row. */
-export function buildDiceShoppingListCsv(pipGrid, unitPrice = null) {
+export function buildDiceShoppingListCsv(pipGrid, unitPrice = null, mask = null) {
   const headers = ["pips", "count"];
   if (unitPrice !== null) headers.push("unit_price", "cost");
   let totalCost = 0;
-  const rows = diceCounts(pipGrid).map(c => {
+  const rows = diceCounts(pipGrid, mask).map(c => {
     const row = [c.pips, c.count];
     if (unitPrice !== null) {
       const cost = roundMoney(c.count * unitPrice);
@@ -456,9 +458,22 @@ export function buildDiceShoppingListCsv(pipGrid, unitPrice = null) {
  * unitPrice, if given, is a rough price per cube -- appends an
  * "estimated_cost" line under the cube total (stickers usually come with
  * the cube, so no per-sticker cost is computed). */
-export function buildRubiksShoppingListCsv(grid, palette, gridW, gridH, unitPrice = null) {
-  const counts = colorCounts(grid, palette, rubiksNamesForPalette(palette));
-  const cubeTotal = rubiksCubeCount(gridW, gridH);
+export function buildRubiksShoppingListCsv(grid, palette, gridW, gridH, unitPrice = null, cubeMask = null) {
+  const cubesW = Math.floor(gridW / 3), cubesH = Math.floor(gridH / 3);
+  let stickerMask = null;
+  if (cubeMask) {
+    // Every sticker of a cube is in or out together.
+    stickerMask = new Uint8Array(gridW * gridH);
+    for (let y = 0; y < gridH; y++) {
+      for (let x = 0; x < gridW; x++) {
+        const cx = Math.min(cubesW - 1, Math.floor(x / 3)), cy = Math.min(cubesH - 1, Math.floor(y / 3));
+        stickerMask[y * gridW + x] = cubeMask[cy * cubesW + cx];
+      }
+    }
+  }
+  const counts = colorCounts(grid, palette, rubiksNamesForPalette(palette), stickerMask);
+  let cubeTotal = rubiksCubeCount(gridW, gridH);
+  if (cubeMask) { cubeTotal = 0; for (let i = 0; i < cubeMask.length; i++) cubeTotal += cubeMask[i]; }
   const lines = [toCsv(["cubes_needed_total", String(cubeTotal)], [])];
   if (unitPrice !== null) {
     lines.push(toCsv(["unit_price", unitPrice.toFixed(2)], []));
@@ -476,12 +491,15 @@ export function buildRubiksShoppingListCsv(grid, palette, gridW, gridH, unitPric
  * or Rubik's sticker colors are. `depthGrid` is a flat Float64Array/Array
  * (row-major, length screwsWide*screwsTall). Mirrors mosaic_core.py's
  * export_screwart_depth_csv. */
-export function buildScrewartDepthCsv(depthGrid, screwsWide, screwsTall) {
-  const lines = [toCsv(["screws_needed_total", String(screwsWide * screwsTall)], [])];
+export function buildScrewartDepthCsv(depthGrid, screwsWide, screwsTall, mask = null) {
+  let total = screwsWide * screwsTall;
+  if (mask) { total = 0; for (let i = 0; i < mask.length; i++) total += mask[i]; }
+  const lines = [toCsv(["screws_needed_total", String(total)], [])];
   lines.push("");
   const rows = [];
   for (let row = 0; row < screwsTall; row++) {
     for (let col = 0; col < screwsWide; col++) {
+      if (mask && !mask[row * screwsWide + col]) continue;
       rows.push([row + 1, col + 1, depthGrid[row * screwsWide + col].toFixed(2)]);
     }
   }
@@ -500,8 +518,8 @@ export function buildScrewartDepthCsv(depthGrid, screwsWide, screwsTall) {
  * strands, but actual yield varies with fabric count and stitch coverage,
  * so treat this as a ballpark, not a precise order quantity. Appends
  * "skeins_needed"/"unit_price"/"cost" columns and a trailing TOTAL row. */
-export function buildCrossStitchShoppingListCsv(grid, unitPrice = null, stitchesPerSkein = 800) {
-  const used = dmcColorCounts(grid).filter(c => c.count > 0);
+export function buildCrossStitchShoppingListCsv(grid, unitPrice = null, stitchesPerSkein = 800, mask = null) {
+  const used = dmcColorCounts(grid, mask).filter(c => c.count > 0);
   const headers = ["dmc_number", "color_name", "hex", "stitch_count", "dmc_url"];
   if (unitPrice !== null) headers.push("skeins_needed", "unit_price", "cost");
   let totalCost = 0;

@@ -217,7 +217,7 @@ export function renderScrewartBuildSheet(depthGrid, screwsWide, screwsTall, cell
   options = {}) {
   const {
     bgColor = [255, 255, 255], lineColor = [200, 200, 200], blockLineColor = [20, 20, 20],
-    textColor = [20, 20, 20], blockSize = 10,
+    textColor = [20, 20, 20], blockSize = 10, mask = null,
   } = options;
 
   const imgW = screwsWide * cellSize, imgH = screwsTall * cellSize;
@@ -234,6 +234,7 @@ export function renderScrewartBuildSheet(depthGrid, screwsWide, screwsTall, cell
   ctx.textBaseline = "middle";
   for (let row = 0; row < screwsTall; row++) {
     for (let col = 0; col < screwsWide; col++) {
+      if (mask && !mask[row * screwsWide + col]) continue; // outside Crop & Shape: no screw
       const x0 = col * cellSize, y0 = row * cellSize;
       ctx.strokeRect(x0 + 0.5, y0 + 0.5, cellSize, cellSize);
       const depth = depthGrid[row * screwsWide + col];
@@ -267,12 +268,14 @@ export function renderScrewartBuildSheet(depthGrid, screwsWide, screwsTall, cell
  * render_screwart_info_page. */
 export function renderScrewartInfoPage(depthGrid, screwsWide, screwsTall, minDepthMm, maxDepthMm,
   createCanvasFn, options = {}) {
-  const { bgColor = [255, 255, 255], textColor = [20, 20, 20] } = options;
-  const screwCount = screwsWide * screwsTall;
+  const { bgColor = [255, 255, 255], textColor = [20, 20, 20], mask = null } = options;
+  let screwCount = 0;
   const suggestedLength = maxDepthMm + SCREWART_MIN_EMBEDMENT_MM;
 
   let actualMin = Infinity, actualMax = -Infinity;
   for (let i = 0; i < depthGrid.length; i++) {
+    if (mask && !mask[i]) continue;
+    screwCount++;
     if (depthGrid[i] < actualMin) actualMin = depthGrid[i];
     if (depthGrid[i] > actualMax) actualMax = depthGrid[i];
   }

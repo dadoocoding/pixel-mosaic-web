@@ -52,8 +52,8 @@ export function dmcColorUrl(dmcNumber) {
  *  entry's DMC floss number (and dmccolorchart.com link) attached -- used
  *  for Cross-Stitch mode's pattern legend and shopping list. `grid` is a
  *  flat [r,g,b] array. */
-export function dmcColorCounts(grid) {
-  const counts = colorCounts(grid, DMC_RGB_PALETTE, DMC_COLOR_NAMES);
+export function dmcColorCounts(grid, mask = null) {
+  const counts = colorCounts(grid, DMC_RGB_PALETTE, DMC_COLOR_NAMES, mask);
   return counts.map((c, i) => ({ ...c, number: DMC_COLOR_NUMBERS[i], url: dmcColorUrl(DMC_COLOR_NUMBERS[i]) }));
 }
 
@@ -61,8 +61,8 @@ export function dmcColorCounts(grid) {
  *  (flat [r,g,b] array), keyed by hex string. Assigned in DMC_RGB_PALETTE
  *  order for a stable, reproducible chart across re-generates of the same
  *  image/settings. */
-export function crossStitchSymbolMap(grid) {
-  const usedHex = new Set(grid.map(rgbToHex));
+export function crossStitchSymbolMap(grid, mask = null) {
+  const usedHex = new Set(grid.filter((_, i) => !mask || mask[i]).map(rgbToHex));
   const symbolMap = new Map();
   let i = 0;
   for (const rgb of DMC_RGB_PALETTE) {
@@ -147,7 +147,7 @@ export function renderCrossStitchMosaic(grid, gridW, gridH, cellSize, createCanv
  *  is a flat [r,g,b] array (row-major, this page's own w x h). Ported from
  *  mosaic_core.py's render_cross_stitch_pattern_page. */
 export function renderCrossStitchPatternPage(gridSlice, w, h, symbolMap, rowOffset, colOffset,
-                                              pageLabel, cellSize, createCanvasFn) {
+                                              pageLabel, cellSize, createCanvasFn, mask = null) {
   const marginTop = 50, marginLeft = 34;
   const imgW = marginLeft + w * cellSize + 10;
   const imgH = marginTop + h * cellSize + 10;
@@ -170,6 +170,7 @@ export function renderCrossStitchPatternPage(gridSlice, w, h, symbolMap, rowOffs
   ctx.font = `${Math.round(cellSize * 0.6)}px sans-serif`;
   for (let row = 0; row < h; row++) {
     for (let col = 0; col < w; col++) {
+      if (mask && !mask[row * w + col]) continue; // outside Crop & Shape: blank cell
       const rgb = gridSlice[row * w + col];
       const x0 = gx0 + col * cellSize, y0 = gy0 + row * cellSize;
       const [pr, pg, pb] = pastelBlend(rgb);
