@@ -229,19 +229,137 @@ export function stencilAddBridges(mask, w, h, width, maxIter = 8) {
   return m;
 }
 
+export const STENCIL_SUBJECT_MODES = ["auto", "plain", "centered", "off"];
+
+/** Edge-clamped square median filter (odd window, exact integers). */
+export function stencilMedian(a, w, h, radius) {
+  if (radius <= 0) return Int32Array.from(a);
+  const k = 2 * radius + 1;
+  const out = new Int32Array(w * h);
+  const win = new Int32Array(k * k);
+  const mid = (k * k) >> 1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let n = 0;
+      for (let dy = -radius; dy <= radius; dy++) {
+        const yy = Math.min(h - 1, Math.max(0, y + dy));
+        for (let dx = -radius; dx <= radius; dx++) {
+          const xx = Math.min(w - 1, Math.max(0, x + dx));
+          win[n++] = a[yy * w + xx];
+        }
+      }
+      win.sort();
+      out[y * w + x] = win[mid];
+    }
+  }
+  return out;
+}
+
+/** Box-blur a mask and keep pixels with >= thrPermille of their neighbourhood set. */
+export function stencilBlurMask(mask, w, h, radius, thrPermille) {
+  const v = new Int32Array(w * h);
+  for (let i = 0; i < w * h; i++) v[i] = mask[i] ? 1000 : 0;
+  const b = stencilBoxBlur(v, w, h, Math.max(1, radius), 1);
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) out[i] = b[i] >= thrPermille ? 1 : 0;
+  return out;
+}
+
+export function stencilLargestComponent(mask, w, h) {
+  const { labels, sizes } = stencilLabel(mask, w, h);
+  if (sizes.length < 2) return Uint8Array.from(mask);
+  let best = 1;
+  for (let l = 2; l < sizes.length; l++) if (sizes[l] > sizes[best]) best = l;
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) out[i] = labels[i] === best ? 1 : 0;
+  return out;
+}
+
+/** Subject for busy backdrops: learn the centre of the frame vs the border
+ *  (colour histograms), keep the biggest matching blob, add the dark hair
+ *  in a halo around it. See mosaic_core.stencil_centered_subject. */
+export function stencilCenteredSubject(rgb, lum, w, h, tolerance, minArea) {
+  const key = new Int32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    key[i] = ((rgb[i * 3] >> 4) << 8) | ((rgb[i * 3 + 1] >> 4) << 4) | (rgb[i * 3 + 2] >> 4);
+  }
+  const hf = new Array(4096).fill(0), hb = new Array(4096).fill(0);
+  let nf = 0, nb = 0;
+  const m = Math.max(2, Math.floor((5 * Math.min(h, w)) / 100));
+  const W11 = 11 * w;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const dx = 2 * x + 1 - w, dy = 2 * y + 1 - h;
+      const inF = (25 * dx) ** 2 * (h * h) + 4 * dy * dy * W11 * W11 <= W11 * W11 * (h * h);
+      const inB = x < m || x >= w - m || y < m || y >= h - m;
+      if (inF) { hf[key[y * w + x]]++; nf++; }
+      if (inB) { hb[key[y * w + x]]++; nb++; }
+    }
+  }
+  const score = new Int32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const pf = Math.floor((hf[key[i]] * 1000) / Math.max(1, nf));
+    const pb = Math.floor((hb[key[i]] * 1000) / Math.max(1, nb));
+    score[i] = Math.floor((pf * 1000) / (pf + pb + 1));
+  }
+  const thr = Math.max(50, Math.min(950, 650 - 5 * Math.floor(tolerance)));
+  let fg = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) fg[i] = score[i] >= thr ? 1 : 0;
+  fg = stencilCleanup(fg, w, h, 5 * minArea);
+  let any = false;
+  for (let i = 0; i < w * h; i++) if (fg[i]) { any = true; break; }
+  if (!any) return new Uint8Array(w * h).fill(1);
+  fg = stencilLargestComponent(fg, w, h);
+  const mn = Math.min(h, w);
+  fg = stencilBlurMask(fg, w, h, Math.floor((3 * mn) / 100), 500);
+  const env = stencilBlurMask(fg, w, h, Math.floor((10 * mn) / 100), 60);
+  const hist = new Array(256).fill(0);
+  let total = 0;
+  for (let i = 0; i < w * h; i++) if (fg[i]) { hist[lum[i]]++; total++; }
+  let cum = 0, dark = 0;
+  for (let v = 0; v < 256; v++) {
+    cum += hist[v];
+    if (cum * 100 >= 30 * total) { dark = v; break; }
+  }
+  const sub = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) sub[i] = (fg[i] || (env[i] && lum[i] <= dark)) ? 1 : 0;
+  return stencilCleanup(sub, w, h, 7 * minArea);
+}
+
 /** rgb: Uint8Array(w*h*3). shapeMask: optional Uint8Array(w*h). */
 export function buildStencilLayers(rgb, w, h, options = {}) {
   const {
-    numLayers = 4, smooth = 3, removeBg = true, bgTolerance = 40, minArea = 12,
+    numLayers = 4, smooth = 3, subjectMode = "auto", bgTolerance = 40, minArea = 12,
     bridgeWidth = 0, overlap = true, shapeMask = null,
   } = options;
   const n = Math.max(STENCIL_MIN_LAYERS, Math.min(STENCIL_MAX_LAYERS, Math.floor(numLayers)));
   let lum = stencilLuminance(rgb, w, h);
-  if (smooth > 0) lum = stencilBoxBlur(lum, w, h, Math.floor(smooth), 2);
-  const bg = removeBg ? stencilBackgroundMask(rgb, w, h, Math.floor(bgTolerance)) : new Uint8Array(w * h);
-  let subject = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) subject[i] = (!bg[i] && (!shapeMask || shapeMask[i])) ? 1 : 0;
-  subject = stencilCleanup(subject, w, h, Math.floor(minArea));
+  if (smooth > 0) {
+    lum = stencilBoxBlur(stencilMedian(lum, w, h, Math.min(3, Math.floor((Math.floor(smooth) + 1) / 2))), w, h, 1, 1);
+  }
+  let used = subjectMode;
+  let subject;
+  if (subjectMode === "off") {
+    subject = new Uint8Array(w * h).fill(1);
+  } else {
+    let flood = null;
+    if (subjectMode === "auto" || subjectMode === "plain") {
+      flood = stencilBackgroundMask(rgb, w, h, Math.floor(bgTolerance));
+    }
+    if (subjectMode === "auto") {
+      let cnt = 0;
+      for (let i = 0; i < w * h; i++) cnt += flood[i];
+      used = cnt * 100 >= 25 * h * w ? "plain" : "centered";
+    }
+    if (used === "plain") {
+      subject = new Uint8Array(w * h);
+      for (let i = 0; i < w * h; i++) subject[i] = flood[i] ? 0 : 1;
+    } else {
+      subject = stencilCenteredSubject(rgb, lum, w, h, Math.floor(bgTolerance), Math.floor(minArea));
+    }
+  }
+  if (shapeMask) for (let i = 0; i < w * h; i++) if (!shapeMask[i]) subject[i] = 0;
+  if (used !== "centered") subject = stencilCleanup(subject, w, h, Math.floor(minArea));
   if (shapeMask) for (let i = 0; i < w * h; i++) if (!shapeMask[i]) subject[i] = 0;
   const ts = stencilThresholds(lum, subject, n);
   const layers = [];
@@ -262,7 +380,7 @@ export function buildStencilLayers(rgb, w, h, options = {}) {
     if (bridgeWidth > 0) m = stencilAddBridges(m, w, h, Math.floor(bridgeWidth));
     layers.push(m);
   }
-  return { layers, subject, thresholds: ts, w, h };
+  return { layers, subject, thresholds: ts, mode: used, w, h };
 }
 
 export function stencilLayerStats(layers) {

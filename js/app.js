@@ -74,6 +74,10 @@ import {
   renderStringartPinMap, renderStringartSequencePage,
 } from "./core/stringart.js";
 import {
+  HALFTONE_MIN_DOTS_ACROSS, HALFTONE_MAX_DOTS_ACROSS, sampleHalftoneToneGrid, halftoneDiameterGrid,
+  renderHalftone, renderHalftonePrintable, renderHalftonePrintablePages, HALFTONE_PRINT_DPI, halftoneSizeCounts, halftoneCsvText, halftoneSvgText,
+} from "./core/halftone.js";
+import {
   SCREWART_MIN_SCREWS_ACROSS, SCREWART_MAX_SCREWS_ACROSS,
   sampleScrewartDepthGrid, renderScrewartMosaic, renderScrewartBuildSheet, renderScrewartInfoPage,
 } from "./core/screwart.js";
@@ -332,6 +336,7 @@ const state = {
   screwartDepthGrid: null,
   // Stencil mode: stencil = last Generate's {layers, w, h, colors, bg, widthIn, overlap}.
   stencil: null,
+  halftone: null,
   screwartDepthGrid: null,
   screwartRenderedMinDepthMm: null,
   screwartRenderedMaxDepthMm: null,
@@ -408,9 +413,22 @@ const el = {
   radialPanel: $("radialPanel"), stainedglassPanel: $("stainedglassPanel"),
   leadedglassPanel: $("leadedglassPanel"),
   lithophanePanel: $("lithophanePanel"), stringartPanel: $("stringartPanel"),
-  screwartPanel: $("screwartPanel"), stencilPanel: $("stencilPanel"),
+  screwartPanel: $("screwartPanel"), stencilPanel: $("stencilPanel"), halftonePanel: $("halftonePanel"),
+  halftoneWide: $("halftoneWide"), halftoneWideVal: $("halftoneWideVal"),
+  halftoneTall: $("halftoneTall"), halftoneTallVal: $("halftoneTallVal"),
+  lockAspectHalftone: $("lockAspectHalftone"),
+  halftoneMax: $("halftoneMax"), halftoneMaxVal: $("halftoneMaxVal"),
+  halftoneMin: $("halftoneMin"), halftoneMinVal: $("halftoneMinVal"),
+  halftoneSteps: $("halftoneSteps"), halftoneStepsVal: $("halftoneStepsVal"),
+  halftoneContrast: $("halftoneContrast"), halftoneContrastVal: $("halftoneContrastVal"),
+  halftoneInvert: $("halftoneInvert"), halftoneDotColor: $("halftoneDotColor"),
+  halftoneBgColor: $("halftoneBgColor"), halftoneEstimate: $("halftoneEstimate"),
+  halftoneGenerateBtn: $("halftoneGenerateBtn"),
+  previewHalftoneCsvBtn: $("previewHalftoneCsvBtn"), exportHalftoneCsvBtn: $("exportHalftoneCsvBtn"),
+  exportHalftoneSvgBtn: $("exportHalftoneSvgBtn"),
+  halftoneTile: $("halftoneTile"), previewHalftonePrintBtn: $("previewHalftonePrintBtn"), exportHalftonePrintBtn: $("exportHalftonePrintBtn"),
   stencilLayers: $("stencilLayers"), stencilLayersVal: $("stencilLayersVal"),
-  stencilRemoveBg: $("stencilRemoveBg"),
+  stencilSubjectMode: $("stencilSubjectMode"),
   stencilBgTolerance: $("stencilBgTolerance"), stencilBgToleranceVal: $("stencilBgToleranceVal"),
   stencilSmooth: $("stencilSmooth"), stencilSmoothVal: $("stencilSmoothVal"),
   stencilMinArea: $("stencilMinArea"), stencilMinAreaVal: $("stencilMinAreaVal"),
@@ -985,6 +1003,7 @@ function applyLoadedImage(canvas, displayName) {
   state.screwartRenderedMinDepthMm = null;
   state.screwartRenderedMaxDepthMm = null;
   state.stencil = null;
+  state.halftone = null;
   state.renderedMode = state.layoutMode;
   clearBrickLayout();
   disableGenerationDependentButtons();
@@ -1002,13 +1021,16 @@ function applyLoadedImage(canvas, displayName) {
   el.stringartGenerateBtn.disabled = false;
   el.screwartGenerateBtn.disabled = false;
   el.stencilGenerateBtn.disabled = false;
+  el.halftoneGenerateBtn.disabled = false;
   resetSampleDisplay();
 
   if (el.lockAspect.checked) syncHeightToAspect();
   if (el.lockAspectRubiks.checked) syncCubesTallToAspect();
   if (el.lockAspectScrewart.checked) syncScrewsTallToAspect();
   if (el.lithophaneLockAspect.checked) onLithophaneWidthChange();
+  if (el.lockAspectHalftone.checked) syncHalftoneTallToAspect();
   updateStencilEstimate();
+  updateHalftoneEstimate();
 
   setViewMode("source");
   updateSizeEstimate();
@@ -1051,7 +1073,9 @@ async function recomputeEffectiveSource({ regenerate = true } = {}) {
   if (el.lockAspectRubiks.checked) syncCubesTallToAspect();
   if (el.lockAspectScrewart.checked) syncScrewsTallToAspect();
   if (el.lithophaneLockAspect.checked) onLithophaneWidthChange();
+  if (el.lockAspectHalftone.checked) syncHalftoneTallToAspect();
   updateStencilEstimate();
+  updateHalftoneEstimate();
   updateSizeEstimate();
   updatePanelEstimate();
   updateRubiksSizeEstimate();
@@ -1455,6 +1479,10 @@ function updatePhysicalSizeEstimate() {
     countW = parseInt(el.screwsWide.value, 10);
     countH = parseInt(el.screwsTall.value, 10);
     pieceWord = "screw";
+  } else if (state.layoutMode === "halftone") {
+    countW = parseInt(el.halftoneWide.value, 10);
+    countH = parseInt(el.halftoneTall.value, 10);
+    pieceWord = "dot";
   } else {
     countW = parseInt(el.gridWidth.value, 10);
     countH = parseInt(el.gridHeight.value, 10);
@@ -1705,6 +1733,12 @@ function rerenderCurrent(resetView = true) {
       state.stringartCanvas, state.stringartShape, STRINGART_WORKING_SIZE,
       state.stringartThreadColor, state.stringartBgColor, makeCanvas);
     if (state.viewMode === "output") refreshPreview(resetView);
+  } else if (state.renderedMode === "halftone" && state.halftone) {
+    const ht = state.halftone;
+    state.outputCanvas = renderHalftone(ht.diam, ht.w, ht.h, state.renderedCellSize, makeCanvas,
+      { dotColor: hexToRgb(el.halftoneDotColor.value), bgColor: hexToRgb(el.halftoneBgColor.value),
+        mask: exportMask(ht.w, ht.h) });
+    if (state.viewMode === "output") refreshPreview(resetView);
   } else if (state.renderedMode === "stencil" && state.stencil) {
     const st = state.stencil;
     state.outputCanvas = renderStencilComposite(st.layers, st.w, st.h, st.colors, st.bg, 900, makeCanvas);
@@ -1746,6 +1780,7 @@ function setLayoutMode(mode) {
   el.stringartPanel.hidden = mode !== "stringart";
   el.screwartPanel.hidden = mode !== "screwart";
   el.stencilPanel.hidden = mode !== "stencil";
+  el.halftonePanel.hidden = mode !== "halftone";
   // Rubik's Cube mode sizes itself in cube units (cubesWide/cubesTall),
   // Radial mode in rings/base segments (radialRings/radialBaseSegments),
   // Stained Glass in a target piece count (stainedglassPieceCount),
@@ -1757,7 +1792,7 @@ function setLayoutMode(mode) {
   // unrelated size controls at once.
   el.sharedGridSizeControls.hidden =
     mode === "rubiks" || mode === "radial" || mode === "stainedglass" || mode === "lithophane"
-    || mode === "stringart" || mode === "leadedglass" || mode === "screwart" || mode === "stencil";
+    || mode === "stringart" || mode === "leadedglass" || mode === "screwart" || mode === "stencil" || mode === "halftone";
   // Each mode's panel has a very different height (Classic's is long,
   // Cross-Stitch's is short, etc.), but they all share one scrolling
   // sidebar. Without this, the sidebar's scroll offset carries over
@@ -2219,6 +2254,11 @@ function disableGenerationDependentButtons() {
   el.previewScrewartGuideBtn.disabled = true;
   el.exportScrewartCsvBtn.disabled = true;
   el.previewScrewartCsvBtn.disabled = true;
+  el.exportHalftoneCsvBtn.disabled = true;
+  el.previewHalftoneCsvBtn.disabled = true;
+  el.exportHalftoneSvgBtn.disabled = true;
+  el.previewHalftonePrintBtn.disabled = true;
+  el.exportHalftonePrintBtn.disabled = true;
 }
 
 function clearBrickLayout() {
@@ -3159,6 +3199,179 @@ function exportScrewartDepthCsv() {
   setStatus("Saved screw_art_depth_list.csv");
 }
 
+
+// ---------------------------------------------------------------------------
+// Generate -- Halftone Dots (equally spaced dots, diameter varies with tone;
+// see core/halftone.js)
+// ---------------------------------------------------------------------------
+
+function syncHalftoneTallToAspect() {
+  const w = parseInt(el.halftoneWide.value, 10);
+  const aspect = state.sourceCanvas.height / state.sourceCanvas.width;
+  let h = Math.max(HALFTONE_MIN_DOTS_ACROSS, Math.round(w * aspect));
+  h = Math.min(h, HALFTONE_MAX_DOTS_ACROSS);
+  el.halftoneTall.value = h;
+  el.halftoneTallVal.textContent = h;
+}
+
+/** Dot spacing in mm from the shared Piece size field (0 if unset). */
+function halftonePitchMm() {
+  const size = parseFloat(el.pieceSize.value) || 0;
+  const mult = { in: 25.4, cm: 10, mm: 1 }[el.pieceSizeUnit.value] || 1;
+  return size > 0 ? size * mult : 0;
+}
+
+function updateHalftoneEstimate() {
+  if (!el.halftoneEstimate) return;
+  const w = parseInt(el.halftoneWide.value, 10), h = parseInt(el.halftoneTall.value, 10);
+  const cell = parseInt(el.cellSize.value, 10);
+  let text = `Output image: ~${(w * cell).toLocaleString()}\u00d7${(h * cell).toLocaleString()}px `
+    + `\u2022 up to ${(w * h).toLocaleString()} dots`;
+  const pitch = halftonePitchMm();
+  if (pitch > 0) {
+    const big = pitch * parseInt(el.halftoneMax.value, 10) / 100;
+    text += `\nLargest hole: ${formatNumberTrim(Math.round(big * 100) / 100)} mm at ${formatNumberTrim(Math.round(pitch * 100) / 100)} mm spacing`;
+  }
+  if (state.renderedMode === "halftone" && state.halftone) {
+    const sizes = halftoneSizeCounts(state.halftone.diam, exportMask(state.halftone.w, state.halftone.h), pitch);
+    if (sizes.length > 0 && sizes.length <= 12) text += `\n${sizes.length} distinct sizes in the current result`;
+  }
+  el.halftoneEstimate.textContent = text;
+  updatePhysicalSizeEstimate();
+}
+
+for (const [id, valId] of [["halftoneTall", "halftoneTallVal"], ["halftoneMax", "halftoneMaxVal"],
+  ["halftoneMin", "halftoneMinVal"], ["halftoneSteps", "halftoneStepsVal"],
+  ["halftoneContrast", "halftoneContrastVal"]]) {
+  el[id].addEventListener("input", () => { el[valId].textContent = el[id].value; updateHalftoneEstimate(); });
+}
+el.halftoneWide.addEventListener("input", () => {
+  el.halftoneWideVal.textContent = el.halftoneWide.value;
+  if (el.lockAspectHalftone.checked && state.sourceCanvas) syncHalftoneTallToAspect();
+  updateHalftoneEstimate();
+});
+el.lockAspectHalftone.addEventListener("change", () => {
+  if (el.lockAspectHalftone.checked && state.sourceCanvas) { syncHalftoneTallToAspect(); updateHalftoneEstimate(); }
+});
+el.pieceSize.addEventListener("input", () => { if (state.layoutMode === "halftone") updateHalftoneEstimate(); });
+el.pieceSizeUnit.addEventListener("change", () => { if (state.layoutMode === "halftone") updateHalftoneEstimate(); });
+// Colors only affect the preview -- repaint without re-sampling.
+for (const id of ["halftoneDotColor", "halftoneBgColor"]) {
+  el[id].addEventListener("input", () => {
+    if (state.renderedMode === "halftone" && state.halftone) rerenderCurrent(false);
+  });
+}
+el.halftoneGenerateBtn.addEventListener("click", generateHalftoneMosaic);
+
+async function generateHalftoneMosaic() {
+  if (!state.sourceCanvas) { setStatus("Load an image first."); return; }
+  const w = parseInt(el.halftoneWide.value, 10), h = parseInt(el.halftoneTall.value, 10);
+  const cellSize = parseInt(el.cellSize.value, 10);
+  const minPct = parseInt(el.halftoneMin.value, 10), maxPct = parseInt(el.halftoneMax.value, 10);
+  if (maxPct <= minPct) { setStatus("Largest dot must be bigger than the smallest dot."); return; }
+
+  el.halftoneGenerateBtn.disabled = true;
+  el.halftoneGenerateBtn.textContent = "Generating...";
+  setStatus("Building halftone dots...");
+  try {
+    const tone = sampleHalftoneToneGrid(state.sourceCanvas, w, h, el.halftoneInvert.checked,
+      parseInt(el.halftoneContrast.value, 10) / 100);
+    const diam = halftoneDiameterGrid(tone, minPct, maxPct, parseInt(el.halftoneSteps.value, 10));
+    state.halftone = { diam, w, h };
+    state.palette = null;
+    state.colorNames = [];
+    state.renderedMode = "halftone";
+    state.renderedCellSize = cellSize;
+    state.renderedGridW = w;
+    state.renderedGridH = h;
+    state.outputCanvas = renderHalftone(diam, w, h, cellSize, makeCanvas,
+      { dotColor: hexToRgb(el.halftoneDotColor.value), bgColor: hexToRgb(el.halftoneBgColor.value),
+        mask: exportMask(w, h) });
+    resetSampleDisplay();
+
+    el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
+    el.exportPosterBtn.disabled = false;
+    el.previewPosterBtn.disabled = false;
+    el.exportHalftoneCsvBtn.disabled = false;
+    el.previewHalftoneCsvBtn.disabled = false;
+    el.exportHalftoneSvgBtn.disabled = false;
+    el.previewHalftonePrintBtn.disabled = false;
+    el.exportHalftonePrintBtn.disabled = false;
+    clearBrickLayout();
+
+    setViewMode("output");
+    updateHalftoneEstimate();
+    setStatus(`Done \u2014 ${w}\u00d7${h} dots.`);
+    await snapshotRecentProject();
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    el.halftoneGenerateBtn.disabled = false;
+    el.halftoneGenerateBtn.textContent = "Generate Mosaic";
+  }
+}
+
+function halftoneCsv() {
+  const { diam, w, h } = state.halftone;
+  return halftoneCsvText(diam, w, h, halftonePitchMm(), exportMask(w, h));
+}
+el.exportHalftoneCsvBtn.addEventListener("click", exportHalftoneCsv);
+el.previewHalftoneCsvBtn.addEventListener("click", () => {
+  if (!state.halftone) return;
+  openTextExportPreviewDialog("Preview: Halftone Dot List (CSV)", halftoneCsv(), exportHalftoneCsv);
+});
+function exportHalftoneCsv() {
+  if (!state.halftone) return;
+  downloadText(halftoneCsv(), "halftone_dots.csv", "text/csv");
+  setStatus("Saved halftone_dots.csv");
+}
+function halftonePrintPages() {
+  const { diam, w, h } = state.halftone;
+  const mask = exportMask(w, h);
+  if (el.halftoneTile.checked) {
+    const mm = halftonePitchMm();
+    if (!(mm > 0)) throw new Error("Set the dot spacing in Piece size first.");
+    return renderHalftonePrintablePages(diam, w, h, mm / 25.4, makeCanvas, { mask });
+  }
+  return [renderHalftonePrintable(diam, w, h, makeCanvas, { mask })];
+}
+el.previewHalftonePrintBtn.addEventListener("click", () => {
+  if (!state.halftone) return;
+  try {
+    openPdfExportPreviewDialog("Preview: Colour-In Sheet (PDF)", halftonePrintPages(), exportHalftonePrint);
+  } catch (err) { setStatus(`Error: ${err.message}`); }
+});
+el.exportHalftonePrintBtn.addEventListener("click", exportHalftonePrint);
+function exportHalftonePrint() {
+  if (!state.halftone) return;
+  try {
+    const pages = halftonePrintPages();
+    const inch = (px) => px / HALFTONE_PRINT_DPI;
+    const orient = (p) => (p.width >= p.height ? "landscape" : "portrait");
+    const doc = new jspdf.jsPDF({
+      unit: "in", format: [inch(pages[0].width), inch(pages[0].height)], orientation: orient(pages[0]),
+    });
+    pages.forEach((page, i) => {
+      if (i > 0) doc.addPage([inch(page.width), inch(page.height)], orient(page));
+      doc.addImage(page.toDataURL("image/png"), "PNG", 0, 0, inch(page.width), inch(page.height));
+    });
+    doc.save("halftone_colour_in.pdf");
+    setStatus(`Saved halftone_colour_in.pdf (${pages.length} page${pages.length === 1 ? "" : "s"})`);
+  } catch (err) {
+    setStatus(`Error building colour-in sheet: ${err.message}`);
+    console.error(err);
+  }
+}
+el.exportHalftoneSvgBtn.addEventListener("click", () => {
+  if (!state.halftone) return;
+  const { diam, w, h } = state.halftone;
+  downloadText(halftoneSvgText(diam, w, h, halftonePitchMm(), exportMask(w, h),
+    hexToRgb(el.halftoneDotColor.value)), "halftone_dots.svg", "image/svg+xml");
+  setStatus("Saved halftone_dots.svg");
+});
+
 // ---------------------------------------------------------------------------
 // Generate -- Stencil (3-6 cut-and-paint layers; see core/stencil.js)
 // ---------------------------------------------------------------------------
@@ -3220,7 +3433,7 @@ async function generateStencilMosaic() {
       ? shapeMaskGrid(state.shapeType, w, h) : null;
     const result = buildStencilLayers(rgb, w, h, {
       numLayers, smooth: parseInt(el.stencilSmooth.value, 10),
-      removeBg: el.stencilRemoveBg.checked, bgTolerance: parseInt(el.stencilBgTolerance.value, 10),
+      subjectMode: el.stencilSubjectMode.value, bgTolerance: parseInt(el.stencilBgTolerance.value, 10),
       minArea: parseInt(el.stencilMinArea.value, 10), bridgeWidth: parseInt(el.stencilBridge.value, 10),
       overlap: el.stencilOverlap.checked, shapeMask,
     });
@@ -3246,7 +3459,8 @@ async function generateStencilMosaic() {
 
     setViewMode("output");
     const stats = stencilLayerStats(result.layers).map(s => `${s.layer}: ${s.percent}%`).join("  ");
-    setStatus(`Done — ${numLayers} stencils (coverage ${stats}).`);
+    const modeNote = result.mode === "centered" ? "centred-subject detection" : result.mode === "plain" ? "plain-backdrop detection" : "whole photo";
+    setStatus(`Done — ${numLayers} stencils, ${modeNote} (coverage ${stats}).`);
     await snapshotRecentProject();
   } catch (err) {
     setStatus(`Error: ${err.message}`);
@@ -5544,6 +5758,7 @@ function generateForCurrentMode() {
     case "stringart": return generateStringartMosaic();
     case "screwart": return generateScrewartMosaic();
     case "stencil": return generateStencilMosaic();
+    case "halftone": return generateHalftoneMosaic();
     default: return generateMosaic();
   }
 }
@@ -5710,11 +5925,22 @@ function collectSettings() {
       screwartMinDepthMm: getScrewartFloat(el.screwartMinDepth, 0),
       screwartMaxDepthMm: getScrewartFloat(el.screwartMaxDepth, 12),
       screwartInvert: el.screwartInvert.checked,
+      halftoneWide: parseInt(el.halftoneWide.value, 10),
+      halftoneTall: parseInt(el.halftoneTall.value, 10),
+      halftoneLockAspect: el.lockAspectHalftone.checked,
+      halftoneMax: parseInt(el.halftoneMax.value, 10),
+      halftoneMin: parseInt(el.halftoneMin.value, 10),
+      halftoneSteps: parseInt(el.halftoneSteps.value, 10),
+      halftoneContrast: parseInt(el.halftoneContrast.value, 10),
+      halftoneInvert: el.halftoneInvert.checked,
+      halftoneTile: el.halftoneTile.checked,
+      halftoneDotColor: el.halftoneDotColor.value,
+      halftoneBgColor: el.halftoneBgColor.value,
 
       stencilLayers: parseInt(el.stencilLayers.value, 10),
       stencilColors: STENCIL_COLOR_IDS.map(id => $(id).value),
       stencilBgColor: el.stencilBgColor.value,
-      stencilRemoveBg: el.stencilRemoveBg.checked,
+      stencilSubjectMode: el.stencilSubjectMode.value,
       stencilBgTolerance: parseInt(el.stencilBgTolerance.value, 10),
       stencilSmooth: parseInt(el.stencilSmooth.value, 10),
       stencilMinArea: parseInt(el.stencilMinArea.value, 10),
@@ -5910,6 +6136,17 @@ function applySettings(data) {
   if (typeof s.screwartInvert === "boolean") el.screwartInvert.checked = s.screwartInvert;
   updateScrewartSizeEstimate();
 
+  for (const k of ["Wide", "Tall", "Max", "Min", "Steps", "Contrast"]) {
+    const v = s["halftone" + k];
+    if (Number.isFinite(v)) { el["halftone" + k].value = v; el["halftone" + k + "Val"].textContent = el["halftone" + k].value; }
+  }
+  if (typeof s.halftoneLockAspect === "boolean") el.lockAspectHalftone.checked = s.halftoneLockAspect;
+  if (typeof s.halftoneInvert === "boolean") el.halftoneInvert.checked = s.halftoneInvert;
+  if (typeof s.halftoneTile === "boolean") el.halftoneTile.checked = s.halftoneTile;
+  if (/^#[0-9a-f]{6}$/i.test(s.halftoneDotColor || "")) el.halftoneDotColor.value = s.halftoneDotColor;
+  if (/^#[0-9a-f]{6}$/i.test(s.halftoneBgColor || "")) el.halftoneBgColor.value = s.halftoneBgColor;
+  updateHalftoneEstimate();
+
   for (const [key, input, val] of [["stencilLayers", "stencilLayers", "stencilLayersVal"],
     ["stencilBgTolerance", "stencilBgTolerance", "stencilBgToleranceVal"],
     ["stencilSmooth", "stencilSmooth", "stencilSmoothVal"], ["stencilMinArea", "stencilMinArea", "stencilMinAreaVal"],
@@ -5920,7 +6157,8 @@ function applySettings(data) {
     s.stencilColors.slice(0, 6).forEach((c, i) => { if (/^#[0-9a-f]{6}$/i.test(c)) $(STENCIL_COLOR_IDS[i]).value = c; });
   }
   if (/^#[0-9a-f]{6}$/i.test(s.stencilBgColor || "")) el.stencilBgColor.value = s.stencilBgColor;
-  if (typeof s.stencilRemoveBg === "boolean") el.stencilRemoveBg.checked = s.stencilRemoveBg;
+  if (["auto", "plain", "centered", "off"].includes(s.stencilSubjectMode)) el.stencilSubjectMode.value = s.stencilSubjectMode;
+  else if (s.stencilRemoveBg === false) el.stencilSubjectMode.value = "off"; // settings saved before subject modes
   if (typeof s.stencilOverlap === "boolean") el.stencilOverlap.checked = s.stencilOverlap;
   if (Number.isFinite(s.stencilWidthIn)) el.stencilWidthIn.value = s.stencilWidthIn;
   syncStencilColorPickers();
