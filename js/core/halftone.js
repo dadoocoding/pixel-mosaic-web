@@ -34,7 +34,10 @@ export function halftoneDiameterGrid(tone, minPct = 0, maxPct = 90, steps = 0) {
   const out = new Float64Array(tone.length);
   for (let i = 0; i < tone.length; i++) {
     let s = Math.sqrt(Math.min(1, Math.max(0, tone[i])));
-    if (steps && steps >= 2) s = Math.floor(s * (steps - 1) + 0.5) / (steps - 1);
+    if (steps && steps >= 2) {
+      if (fmin <= 0) { out[i] = fmax * Math.floor(s * steps + 0.5) / steps; continue; }
+      s = Math.floor(s * (steps - 1) + 0.5) / (steps - 1);
+    }
     out[i] = fmin + (fmax - fmin) * s;
   }
   return out;
@@ -200,4 +203,50 @@ export function renderHalftonePrintablePages(diam, dotsW, dotsH, pitchIn, create
     }
   }
   return pages;
+}
+
+export function parseDrillSizes(text) {
+  const out = new Set();
+  for (const tok of String(text).trim().split(/[,;\s]+/)) {
+    if (!tok) continue;
+    const v = Number(tok);
+    if (!(v >= 0) || !Number.isFinite(v)) throw new Error(`Drill size '${tok}' must be a number of mm, 0 or more.`);
+    out.add(v);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+function fmtNum(n) {
+  const t = (Math.floor(n * 100 + 0.5) / 100).toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return t || "0";
+}
+
+/** Exactly the user's bits plus a "no dot" level; tone picks a level by equal
+ *  steps of sqrt(tone). Mirrors mosaic_core.halftone_grid_from_bits. */
+export function halftoneGridFromBits(tone, bitsMm, pitchMm) {
+  if (!(pitchMm > 0)) throw new Error("Set a dot spacing (Piece size) to use your own drill sizes.");
+  const bits = [...new Set(bitsMm.filter((b) => b > 0))].sort((a, b) => a - b);
+  if (bits.length === 0) throw new Error("Enter at least one drill size in mm.");
+  for (const b of bits) {
+    if (b >= pitchMm) throw new Error(`Drill size ${fmtNum(b)} mm is as big as the dot spacing (${fmtNum(pitchMm)} mm); use smaller bits or a bigger spacing.`);
+  }
+  const levels = [0, ...bits];
+  const n = bits.length;
+  const out = new Float64Array(tone.length);
+  for (let i = 0; i < tone.length; i++) {
+    const s = Math.sqrt(Math.min(1, Math.max(0, tone[i])));
+    out[i] = levels[Math.floor(s * n + 0.5)] / pitchMm;
+  }
+  return out;
+}
+
+export function halftoneSuggestBits(pitchMm, minPct, maxPct, steps) {
+  steps = Math.max(2, Math.floor(steps));
+  const sizes = new Set();
+  for (let i = 0; i < steps; i++) {
+    const f = (minPct <= 0 ? maxPct * (i + 1) / steps : minPct + (maxPct - minPct) * i / (steps - 1)) / 100;
+    const v = Math.floor(f * pitchMm * 10 + 0.5) / 10;
+    if (v > 0) sizes.add(v);
+  }
+  return [...sizes].sort((a, b) => a - b);
 }

@@ -15,6 +15,7 @@ import { adaptiveColorCounts } from "./adaptive.js";
 import { radialRingSegments } from "./radial.js";
 import { nearestPaintMatchesAllBrands, formatMatch, formatBestMatch } from "./paintColors.js";
 import { dmcColorCounts } from "./crossstitch.js";
+import { stringartGridSide, stringartPinLabels } from "./stringart.js";
 
 function csvEscape(value) {
   const s = String(value);
@@ -369,6 +370,12 @@ export function buildStringartSequenceJson(sequence, positions, shape, numPins, 
     })),
     sequence: Array.from(sequence),
   };
+  if (shape === "grid") {
+    const labels = stringartPinLabels(shape, numPins);
+    data.grid_size = stringartGridSide(numPins);
+    data.pins.forEach((pin) => { pin.label = labels[pin.index]; });
+    data.sequence_labels = Array.from(sequence).map((i) => labels[i]);
+  }
   return JSON.stringify(data, null, 2);
 }
 
@@ -431,12 +438,12 @@ export function buildAdaptiveShoppingListCsv(leaves, unitPrice = null) {
 /** Dice mode's shopping list -- how many dice show each face (1-6).
  * unitPrice, if given, is a rough price per die -- appends
  * "unit_price"/"cost" columns and a trailing TOTAL row. */
-export function buildDiceShoppingListCsv(pipGrid, unitPrice = null, mask = null) {
+export function buildDiceShoppingListCsv(pipGrid, unitPrice = null, mask = null, blankOne = false) {
   const headers = ["pips", "count"];
   if (unitPrice !== null) headers.push("unit_price", "cost");
   let totalCost = 0;
   const rows = diceCounts(pipGrid, mask).map(c => {
-    const row = [c.pips, c.count];
+    const row = [(blankOne && c.pips === 1) ? "1 (solid)" : c.pips, c.count];
     if (unitPrice !== null) {
       const cost = roundMoney(c.count * unitPrice);
       totalCost += cost;

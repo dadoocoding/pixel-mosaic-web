@@ -42,10 +42,11 @@ function srgbLuminance([r, g, b]) {
  * the dithering quantization targets. This is what makes the dithered
  * pattern's aggregate density track the source image's brightness
  * regardless of which die/pip colors are picked. */
-export function pipLevelBrightness(dieColor, pipColor) {
+export function pipLevelBrightness(dieColor, pipColor, blankOne = false) {
   const dieLum = srgbLuminance(dieColor);
   const pipLum = srgbLuminance(pipColor);
-  return PIP_COVERAGE.map(c => dieLum * (1 - c) + pipLum * c);
+  const coverage = blankOne ? [0, ...PIP_COVERAGE.slice(1)] : PIP_COVERAGE;
+  return coverage.map(c => dieLum * (1 - c) + pipLum * c);
 }
 
 /**
@@ -200,6 +201,7 @@ export function renderDiceMosaic(pipGrid, gridW, gridH, cellSize, dieColor, pipC
       }
 
       const k = pipGrid[row * gridW + col];
+      if (options.blankOne && k === 1) continue; // solid face: no pip
       ctx.fillStyle = `rgb(${pipColor.join(",")})`;
       for (const [fx, fy] of PIP_LAYOUTS[k]) {
         const cx = fx0 + fx * faceW, cy = fy0 + fy * faceH;
@@ -259,7 +261,7 @@ export function renderDiceKey(pipGrid, dieColor, pipColor, createCanvasFn, optio
 
     const pipR = Math.max(1, swatchSize * 0.09);
     ctx.fillStyle = `rgb(${pipColor.join(",")})`;
-    for (const [fx, fy] of PIP_LAYOUTS[k]) {
+    for (const [fx, fy] of ((options.blankOne && k === 1) ? [] : PIP_LAYOUTS[k])) {
       const cx = x0 + fx * faceW, cy = y0 + fy * faceH;
       ctx.beginPath();
       ctx.ellipse(cx, cy, pipR, pipR, 0, 0, Math.PI * 2);
@@ -271,7 +273,7 @@ export function renderDiceKey(pipGrid, dieColor, pipColor, createCanvasFn, optio
     ctx.font = "16px sans-serif";
     ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";
-    ctx.fillText(`Face #${k}`, labelX, y0 + 2 + 16);
+    ctx.fillText((options.blankOne && k === 1) ? "Face #1 (solid, no pip)" : `Face #${k}`, labelX, y0 + 2 + 16);
 
     ctx.fillStyle = "rgb(120,120,120)";
     ctx.font = "13px sans-serif";

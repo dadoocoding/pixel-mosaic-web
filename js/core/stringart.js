@@ -16,9 +16,9 @@
  */
 
 export const STRINGART_MIN_PINS = 60;
-export const STRINGART_MAX_PINS = 360; // one pin per degree at the circular frame's max
+export const STRINGART_MAX_PINS = 720; // raised from 360 for large physical frames
 export const STRINGART_MIN_LINES = 50;
-export const STRINGART_MAX_LINES = 3000;
+export const STRINGART_MAX_LINES = 4000;
 // Both sliders independently bound the compute cost (unlike Lithophane's
 // width/height, whose *ratio* could blow the triangle count past either
 // slider's own max) -- pins x lines is the whole cost of the greedy loop,
@@ -26,6 +26,9 @@ export const STRINGART_MAX_LINES = 3000;
 // friendly-error guard the way Lithophane's aspect ratio did.
 export const STRINGART_WORKING_SIZE = 350; // px, internal square working canvas both frame shapes sample onto
 export const STRINGART_LINE_WEIGHT = 18.0; // 0-255 darkness removed from every pixel a thread line crosses
+export const STRINGART_GRID_MIN_SIDE = 8;   // "Nail grid" frame: nails per side (square grid, so pins = side * side)
+export const STRINGART_GRID_MAX_SIDE = 26;  // 26 x 26 = 676 nails -- same compute ceiling as the 720-pin edge frames; also A..Z column letters
+export const STRINGART_GRID_MIN_SPAN = 3;   // grid frame: skip candidate nails closer than this many grid steps (Chebyshev)
 export const STRINGART_SKIP_ADJACENT = 3; // candidate pins within this many indices of the current pin are skipped
 
 /** Pin [x, y] positions around the frame, index 0..numPins-1, evenly
@@ -60,10 +63,57 @@ export function stringartPinPositions(shape, numPins, size = STRINGART_WORKING_S
         positions.push([margin, margin + h - (t - 2 * w - h)]);
       }
     }
+  } else if (shape === "grid") {
+    const n = stringartGridSide(numPins);
+    const margin = 1.0;
+    const step = (size - 2 * margin) / (n - 1);
+    // index = row * n + col; row 0 is the TOP row, col 0 the LEFT column
+    for (let i = 0; i < numPins; i++) {
+      const r = Math.floor(i / n), c = i % n;
+      positions.push([margin + c * step, margin + r * step]);
+    }
   } else {
     throw new Error(`Unknown string art frame shape: ${shape}`);
   }
   return positions;
+}
+
+/** Nails per side of a square nail grid holding exactly numPins nails. */
+export function stringartGridSide(numPins) {
+  const n = Math.round(Math.sqrt(numPins));
+  if (n < 2 || n * n !== numPins) throw new Error(`A nail grid needs a square number of nails (got ${numPins}).`);
+  return n;
+}
+
+/** 0 -> A ... 25 -> Z, 26 -> AA (spreadsheet style). */
+export function stringartColumnLetters(col) {
+  let out = "";
+  col += 1;
+  while (col > 0) {
+    const rem = (col - 1) % 26;
+    col = Math.floor((col - 1) / 26);
+    out = String.fromCharCode(65 + rem) + out;
+  }
+  return out;
+}
+
+/** Human-readable nail name. Edge frames: just the pin number. Nail grid:
+ * spreadsheet-style column letter plus row number counted from the BOTTOM
+ * (A1 = bottom-left), like the rulers on a printed pegboard -- so the
+ * top-left nail, pin 0, is "A<side>". */
+export function stringartPinLabel(shape, index, numPins) {
+  if (shape !== "grid") return String(index);
+  const n = stringartGridSide(numPins);
+  const r = Math.floor(index / n), c = index % n;
+  return `${stringartColumnLetters(c)}${n - r}`;
+}
+
+/** Label for every pin (an array), or null for edge frames (plain numbers). */
+export function stringartPinLabels(shape, numPins) {
+  if (shape !== "grid") return null;
+  const out = [];
+  for (let i = 0; i < numPins; i++) out.push(stringartPinLabel(shape, i, numPins));
+  return out;
 }
 
 /** Flat (row-major, y*size+x) pixel indices crossed by the segment from
@@ -160,14 +210,22 @@ export function generateStringartSequence(target, shape, numPins, numLines,
   }
   const keyFor = (a, b) => (a < b ? a * numPins + b : b * numPins + a);
 
+  const gridN = shape === "grid" ? stringartGridSide(numPins) : 0;
+
   let current = 0;
   const sequence = [0];
   for (let step = 0; step < numLines; step++) {
     let bestJ = null, bestScore = 0.0, bestIdx = null;
     for (let j = 0; j < numPins; j++) {
       if (j === current) continue;
-      const d = Math.min(((j - current) % numPins + numPins) % numPins, ((current - j) % numPins + numPins) % numPins);
-      if (d < STRINGART_SKIP_ADJACENT) continue;
+      if (gridN) {
+        // nail grid: "too close" is measured in grid steps, not index distance
+        if (Math.max(Math.abs((j % gridN) - (current % gridN)),
+          Math.abs(Math.floor(j / gridN) - Math.floor(current / gridN))) < STRINGART_GRID_MIN_SPAN) continue;
+      } else {
+        const d = Math.min(((j - current) % numPins + numPins) % numPins, ((current - j) % numPins + numPins) % numPins);
+        if (d < STRINGART_SKIP_ADJACENT) continue;
+      }
       const idx = lineCache.get(keyFor(current, j));
       let score = 0.0;
       for (let k = 0; k < idx.length; k++) {
@@ -249,12 +307,19 @@ function formatNumber(n) {
   return (Math.round(n * 100) / 100).toString();
 }
 
-/** e.g. formatStringartFrameSize('circle', 12, 'in') -> 'Diameter: 12 in'. */
-export function formatStringartFrameSize(shape, frameSize, unit) {
+/** e.g. formatStringartFrameSize('circle', 12, 'in') -> 'Diameter: 12 in'.
+ * For a nail grid, pass numPins to also get the nail spacing:
+ * 'Frame size: 12 in (23 x 23 nails, 0.55 in apart)' (frame size = outer nail to outer nail). */
+export function formatStringartFrameSize(shape, frameSize, unit, numPins = null) {
   if (frameSize <= 0) return "";
   const u = PIECE_SIZE_UNITS.includes(unit) ? unit : "in";
   const label = shape === "circle" ? "Diameter" : "Frame size";
-  return `${label}: ${formatNumber(frameSize)} ${u}`;
+  let text = `${label}: ${formatNumber(frameSize)} ${u}`;
+  if (shape === "grid" && numPins) {
+    const n = stringartGridSide(numPins);
+    text += ` (${n} x ${n} nails, ${formatNumber(frameSize / (n - 1))} ${u} apart)`;
+  }
+  return text;
 }
 
 /** e.g. formatStringartThreadLength(452.7, 'in') -> '~453 in of thread'. */
@@ -262,6 +327,21 @@ export function formatStringartThreadLength(length, unit) {
   if (length <= 0) return "";
   const u = PIECE_SIZE_UNITS.includes(unit) ? unit : "in";
   return `~${formatNumber(length)} ${u} of thread`;
+}
+
+export const STRINGART_THREAD_SPARE = 0.10;
+
+function fmt1(v) { return formatNumber(Math.floor(v * 10 + 0.5) / 10); }
+
+/** Mirrors mosaic_core.stringart_thread_summary. */
+export function stringartThreadSummary(length, unit) {
+  if (!(length > 0)) return "";
+  const u = PIECE_SIZE_UNITS.includes(unit) ? unit : "in";
+  const meters = length * { in: 0.0254, cm: 0.01, mm: 0.001 }[u];
+  const spare = length * (1 + STRINGART_THREAD_SPARE);
+  return `Thread needed: ~${fmt1(length)} ${u} (${fmt1(meters / 0.3048)} ft / ${fmt1(meters)} m)\n`
+    + `With ${Math.round(STRINGART_THREAD_SPARE * 100)}% spare for knots and wrapping: `
+    + `~${fmt1(spare)} ${u} (${fmt1(spare * meters / length)} m)`;
 }
 
 /** A print page showing the pins numbered around the frame outline -- the
@@ -292,9 +372,40 @@ export function renderStringartPinMap(positions, shape, createCanvasFn, options 
   ctx.font = "22px sans-serif";
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
-  ctx.fillText(`String Art Pin Map — ${positions.length} pins (${shape})`, 20, 16);
+  if (shape === "grid") {
+    const gn = stringartGridSide(positions.length);
+    ctx.fillText(`String Art Nail Grid — ${gn} x ${gn} nails (A1 = bottom-left)`, 20, 16);
+  } else {
+    ctx.fillText(`String Art Pin Map — ${positions.length} pins (${shape})`, 20, 16);
+  }
 
   const ox = pad, oy = pad + topMargin;
+  if (shape === "grid") {
+    // Every nail gets a dot; columns (letters) and rows (numbers) are labeled
+    // along all four sides like a pegboard ruler.
+    const n = stringartGridSide(positions.length);
+    ctx.fillStyle = `rgb(${threadColor.join(",")})`;
+    for (const [x, y] of positions) {
+      ctx.beginPath();
+      ctx.ellipse(ox + x * scale, oy + y * scale, 3, 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.font = "13px sans-serif";
+    ctx.fillStyle = "rgb(70,70,70)";
+    for (let c = 0; c < n; c++) {
+      const px = ox + positions[c][0] * scale;
+      const letter = stringartColumnLetters(c);
+      ctx.fillText(letter, px - 4 * letter.length, oy - 22);
+      ctx.fillText(letter, px - 4 * letter.length, oy + contentSize + 8);
+    }
+    for (let r = 0; r < n; r++) {
+      const py = oy + positions[r * n][1] * scale;
+      const num = String(n - r);
+      ctx.fillText(num, ox - 8 - 8 * num.length, py - 7);
+      ctx.fillText(num, ox + contentSize + 8, py - 7);
+    }
+    return canvas;
+  }
   ctx.strokeStyle = "rgb(180,180,180)";
   ctx.lineWidth = 1;
   if (shape === "circle") {
@@ -336,10 +447,10 @@ export function renderStringartPinMap(positions, shape, createCanvasFn, options 
  * entries -- printable as a checklist to follow while stringing the
  * thread, pin map in hand. */
 export function renderStringartSequencePage(sequence, pageStart, pageEnd, pageLabel, createCanvasFn, options = {}) {
-  const { cols = 12, bgColor = [255, 255, 255], textColor = [20, 20, 20] } = options;
+  const { cols = 12, bgColor = [255, 255, 255], textColor = [20, 20, 20], labels = null } = options;
   const entries = sequence.slice(pageStart, pageEnd);
   const rows = Math.ceil(entries.length / cols);
-  const cellW = 62, cellH = 26;
+  const cellW = labels ? 80 : 62, cellH = 26;
   const pad = 20;
   const imgW = pad * 2 + cols * cellW;
   const imgH = pad * 2 + 40 + rows * cellH;
@@ -362,7 +473,7 @@ export function renderStringartSequencePage(sequence, pageStart, pageEnd, pageLa
     const x = pad + col * cellW;
     const y = y0 + row * cellH;
     const step = pageStart + k;
-    ctx.fillText(`${step}: ${entries[k]}`, x, y);
+    ctx.fillText(`${step}: ${labels ? labels[entries[k]] : entries[k]}`, x, y);
   }
   return canvas;
 }

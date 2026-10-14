@@ -755,3 +755,10 @@ button.primary:hover:not(:disabled) { background: var(--accent-hover); }
 /* Stencil mode */
 .stencil-colors { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .stencil-colors input[type="color"] { width: 34px; height: 28px; padding: 0; border: 1px solid var(--border, #556); border-radius: 4px; background: none; cursor: pointer; }
+
+/* ---- Product Kit dialogs ---- */
+.kit-dialog { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.kit-field { display: flex; flex-direction: column; gap: 4px; }
+.kit-field input[type="text"], .kit-field textarea { width: 100%; box-sizing: border-box; }
+.kit-check { display: flex; align-items: center; gap: 6px; }
+#kitSection[hidden], #kitButtons[hidden] { display: none !important; }

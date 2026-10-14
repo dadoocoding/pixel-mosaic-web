@@ -4,14 +4,14 @@
  */
 
 import { rgbToHex, hexToRgb, contrastTextColor } from "./core/color.js";
-import { buildMonochromePalette } from "./core/quantize.js";
+import { buildMonochromePalette, quantizeToFixedPalette } from "./core/quantize.js";
 import { imageToGrid } from "./core/grid.js";
 import { renderMosaic, renderBrickMosaic, estimateOutputDimensions, renderPaintByNumber, renderColorKey } from "./core/render.js";
 import { hexHitTest, circleInterlockHitTest, diamondInterlockHitTest, interlockRowHeightFactor, shapeColumnWidthFactor } from "./core/shapes.js";
 import { splitIntoPanels } from "./core/panels.js";
 import { applyCropAndShape, applyShapeToCanvas, shapeMaskGrid, shapePieceCount, shapeLabelSuffix, SHAPE_LABELS } from "./core/shape.js";
 import { openCropEditor } from "./ui/cropEditor.js";
-import { LEGO_BRICK_SIZES, footprintLabel } from "./core/bricks.js";
+import { LEGO_BRICK_SIZES, footprintLabel, computeBrickLayout } from "./core/bricks.js";
 import { colorCounts } from "./core/colorCounts.js";
 import { LEGO_SOLID_COLORS, PERLER_BEAD_COLORS, HAMA_BEAD_COLORS, ARTKAL_BEAD_COLORS, parsePaletteFile } from "./core/palettes.js";
 import { buildQuadtree, renderAdaptiveMosaic } from "./core/adaptive.js";
@@ -31,6 +31,8 @@ import { PIECE_SIZE_UNITS, formatPhysicalSize, ASSEMBLY_SECONDS_PER_PIECE, forma
 import { POSTER_PAPER_SIZES, renderPosterPages } from "./core/poster.js";
 import { buildColorSeparatedSvg } from "./core/svgExport.js";
 import * as recentProjects from "./core/recentProjects.js";
+import { SUPPORTED_MODES as KIT_MODES, kitText, buildKitZip, slugify as kitSlugify, normalizeBranding, parseHexColor,
+  loadBranding, saveBranding, DEFAULT_ACCENT } from "./core/productKit.js";
 import { DMC_RGB_PALETTE } from "./core/dmc.js";
 import {
   dmcColorCounts, crossStitchSymbolMap, renderCrossStitchMosaic,
@@ -70,12 +72,12 @@ import {
 import {
   STRINGART_MIN_PINS, STRINGART_MAX_PINS, STRINGART_MIN_LINES, STRINGART_MAX_LINES,
   STRINGART_WORKING_SIZE, stringartPinPositions, sampleStringartTarget, renderStringartPreview,
-  estimateStringartThreadLength, formatStringartFrameSize, formatStringartThreadLength,
+  estimateStringartThreadLength, stringartGridSide, stringartPinLabels, stringartThreadSummary, STRINGART_THREAD_SPARE, formatStringartFrameSize, formatStringartThreadLength,
   renderStringartPinMap, renderStringartSequencePage,
 } from "./core/stringart.js";
 import {
   HALFTONE_MIN_DOTS_ACROSS, HALFTONE_MAX_DOTS_ACROSS, sampleHalftoneToneGrid, halftoneDiameterGrid,
-  renderHalftone, renderHalftonePrintable, renderHalftonePrintablePages, HALFTONE_PRINT_DPI, halftoneSizeCounts, halftoneCsvText, halftoneSvgText,
+  renderHalftone, parseDrillSizes, halftoneGridFromBits, halftoneSuggestBits, renderHalftonePrintable, renderHalftonePrintablePages, HALFTONE_PRINT_DPI, halftoneSizeCounts, halftoneCsvText, halftoneSvgText,
 } from "./core/halftone.js";
 import {
   SCREWART_MIN_SCREWS_ACROSS, SCREWART_MAX_SCREWS_ACROSS,
@@ -173,6 +175,7 @@ const state = {
   dieColor: [20, 20, 24],
   pipColor: [235, 235, 235],
   dicePipGrid: null,
+  diceBlankOne: false,
 
   cubesWide: 20,
   cubesTall: 15,
@@ -426,6 +429,7 @@ const el = {
   halftoneGenerateBtn: $("halftoneGenerateBtn"),
   previewHalftoneCsvBtn: $("previewHalftoneCsvBtn"), exportHalftoneCsvBtn: $("exportHalftoneCsvBtn"),
   exportHalftoneSvgBtn: $("exportHalftoneSvgBtn"),
+  halftoneUseBits: $("halftoneUseBits"), halftoneBits: $("halftoneBits"), halftoneBitsFillBtn: $("halftoneBitsFillBtn"),
   halftoneTile: $("halftoneTile"), previewHalftonePrintBtn: $("previewHalftonePrintBtn"), exportHalftonePrintBtn: $("exportHalftonePrintBtn"),
   stencilLayers: $("stencilLayers"), stencilLayersVal: $("stencilLayersVal"),
   stencilSubjectMode: $("stencilSubjectMode"),
@@ -454,7 +458,7 @@ const el = {
   exportAdaptiveShoppingBtn: $("exportAdaptiveShoppingBtn"), previewAdaptiveShoppingBtn: $("previewAdaptiveShoppingBtn"),
   dieColorBtn: $("dieColorBtn"), dieColorPicker: $("dieColorPicker"),
   pipColorBtn: $("pipColorBtn"), pipColorPicker: $("pipColorPicker"),
-  diceGenerateBtn: $("diceGenerateBtn"),
+  diceBlankOne: $("diceBlankOne"), diceGenerateBtn: $("diceGenerateBtn"),
   exportDiceGuideBtn: $("exportDiceGuideBtn"), previewDiceGuideBtn: $("previewDiceGuideBtn"),
   exportDiceShoppingBtn: $("exportDiceShoppingBtn"), previewDiceShoppingBtn: $("previewDiceShoppingBtn"),
   cubesWide: $("cubesWide"), cubesWideVal: $("cubesWideVal"),
@@ -492,6 +496,7 @@ const el = {
   exportPreviewBtn: $("exportPreviewBtn"),
   exportPngBtn: $("exportPngBtn"), exportJsonBtn: $("exportJsonBtn"), previewJsonBtn: $("previewJsonBtn"),
   posterPaper: $("posterPaper"), exportPosterBtn: $("exportPosterBtn"), previewPosterBtn: $("previewPosterBtn"),
+  kitBrandingBtn: $("kitBrandingBtn"), kitExportBtn: $("kitExportBtn"),
   exportCsvBtn: $("exportCsvBtn"), previewCsvBtn: $("previewCsvBtn"),
   exportPaintByNumberBtn: $("exportPaintByNumberBtn"), previewPaintByNumberBtn: $("previewPaintByNumberBtn"),
   exportSvgBtn: $("exportSvgBtn"), previewSvgBtn: $("previewSvgBtn"),
@@ -562,8 +567,10 @@ const el = {
   previewScrewartCsvBtn: $("previewScrewartCsvBtn"), exportScrewartCsvBtn: $("exportScrewartCsvBtn"),
   stringartShapeSeg: $("stringartShapeSeg"),
   stringartPins: $("stringartPins"), stringartPinsVal: $("stringartPinsVal"),
+  stringartGrid: $("stringartGrid"), stringartGridVal: $("stringartGridVal"),
+  stringartPinsGroup: $("stringartPinsGroup"), stringartGridGroup: $("stringartGridGroup"),
   stringartLines: $("stringartLines"), stringartLinesVal: $("stringartLinesVal"),
-  stringartEstimate: $("stringartEstimate"),
+  stringartEstimate: $("stringartEstimate"), stringartThreadInfo: $("stringartThreadInfo"),
   stringartFrameSize: $("stringartFrameSize"), stringartFrameSizeUnit: $("stringartFrameSizeUnit"),
   stringartThreadColorBtn: $("stringartThreadColorBtn"), stringartThreadColorPicker: $("stringartThreadColorPicker"),
   stringartBgColorBtn: $("stringartBgColorBtn"), stringartBgColorPicker: $("stringartBgColorPicker"),
@@ -661,7 +668,7 @@ function refreshPreview(resetView = true) {
 
   let shown = null;
   if (state.viewMode === "source") {
-    if (state.sourceCanvas) { viewer.setImage(state.sourceCanvas, { resetView }); shown = state.sourceCanvas; }
+    if (state.sourceCanvas) { shown = displaySourceCanvas(); viewer.setImage(shown, { resetView }); }
     else viewer.showPlaceholder("Load an image to get started");
   } else if (state.viewMode === "bricks") {
     if (state.brickCanvas) { viewer.setImage(state.brickCanvas, { resetView }); shown = state.brickCanvas; }
@@ -684,16 +691,30 @@ function refreshPreview(resetView = true) {
 // static left/right split: at 0 ("Before" end) the composite is 100% the
 // original photo; at 1 ("After" end) it's 100% the mosaic; in between, the
 // mosaic is revealed starting from the left edge, growing rightward.
-let compareCache = { canvas: null, w: 0, h: 0, source: null };
+let compareCache = { canvas: null, w: 0, h: 0, source: null, shape: null };
+
+/** The source photo as displayed in the Source/Compare views: transparent outside an
+ *  oval/circle Crop & Shape shape, like the rendered output. Cached per (canvas, shape). */
+let displaySourceCache = { src: null, shape: null, canvas: null };
+function displaySourceCanvas() {
+  const src = state.sourceCanvas;
+  if (!src || (state.shapeType !== "oval" && state.shapeType !== "circle")) return src;
+  if (displaySourceCache.src === src && displaySourceCache.shape === state.shapeType) return displaySourceCache.canvas;
+  const c = makeCanvas(src.width, src.height);
+  c.getContext("2d").drawImage(src, 0, 0);
+  applyShapeToCanvas(c, state.shapeType);
+  displaySourceCache = { src, shape: state.shapeType, canvas: c };
+  return c;
+}
 
 function buildCompareBeforeCanvas(outW, outH) {
   if (compareCache.canvas && compareCache.w === outW && compareCache.h === outH
-      && compareCache.source === state.sourceCanvas) {
+      && compareCache.source === state.sourceCanvas && compareCache.shape === state.shapeType) {
     return compareCache.canvas;
   }
   const c = makeCanvas(outW, outH);
-  c.getContext("2d").drawImage(state.sourceCanvas, 0, 0, outW, outH);
-  compareCache = { canvas: c, w: outW, h: outH, source: state.sourceCanvas };
+  c.getContext("2d").drawImage(displaySourceCanvas(), 0, 0, outW, outH);
+  compareCache = { canvas: c, w: outW, h: outH, source: state.sourceCanvas, shape: state.shapeType };
   return c;
 }
 
@@ -1424,6 +1445,7 @@ function updatePhysicalSizeEstimate() {
   }
 
   if (state.layoutMode === "stringart") {
+    updateStringartThreadInfo();
     // A single continuous thread path around a frame, not a countW x
     // countH grid of pieces, so this shows the mode's own frame size plus
     // an estimated thread length directly (formatStringartFrameSize/
@@ -1434,14 +1456,14 @@ function updatePhysicalSizeEstimate() {
     // per-piece build step, just following the pin sequence.
     const frameSize = parseFloat(el.stringartFrameSize.value) || 0;
     const unit = el.stringartFrameSizeUnit.value;
-    const shape = [...el.stringartShapeSeg.children].find(b => b.classList.contains("active")).dataset.shape;
-    const formatted = formatStringartFrameSize(shape, frameSize, unit);
+    const shape = currentStringartShape();
+    const formatted = formatStringartFrameSize(shape, frameSize, unit, shape === "grid" ? currentStringartPinCount() : null);
     const parts = [];
     if (formatted) parts.push(formatted);
     if (state.renderedMode === "stringart" && state.stringartThreadLength !== null) {
       const lengthText = formatStringartThreadLength(state.stringartThreadLength, state.stringartFrameSizeUnit);
       if (lengthText) parts.push(lengthText);
-      parts.push(`${state.stringartSequence.length - 1} thread lines / ${state.stringartNumPins} pins`);
+      parts.push(`${state.stringartSequence.length - 1} thread lines / ${state.stringartNumPins} ${state.stringartShape === "grid" ? "nails" : "pins"}`);
     }
     el.physicalSizeEstimate.textContent = parts.join("   •   ");
     return;
@@ -1679,7 +1701,8 @@ function rerenderCurrent(resetView = true) {
     if (state.viewMode === "output") refreshPreview(resetView);
   } else if (state.renderedMode === "dice" && state.dicePipGrid) {
     state.outputCanvas = renderDiceMosaic(state.dicePipGrid, state.renderedGridW, state.renderedGridH,
-      state.renderedCellSize, state.dieColor, state.pipColor, state.bgColor, makeCanvas);
+      state.renderedCellSize, state.dieColor, state.pipColor, state.bgColor, makeCanvas,
+      { blankOne: state.diceBlankOne, mask: exportMask(state.renderedGridW, state.renderedGridH) });
     if (state.viewMode === "output") refreshPreview(resetView);
   } else if (state.renderedMode === "rubiks" && state.rubiksGrid) {
     state.outputCanvas = renderRubiksMosaic(state.rubiksGrid, state.renderedGridW, state.renderedGridH,
@@ -1978,17 +2001,61 @@ el.stringartShapeSeg.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-shape]");
   if (!btn) return;
   [...el.stringartShapeSeg.children].forEach(b => b.classList.toggle("active", b === btn));
-  updatePhysicalSizeEstimate();
+  syncStringartShapeControls();
+  updateStringartEstimate();
 });
+
+function currentStringartShape() {
+  return [...el.stringartShapeSeg.children].find(b => b.classList.contains("active")).dataset.shape;
+}
+
+/** Total pins/nails: the pins slider, or side * side for a nail grid. */
+function currentStringartPinCount() {
+  if (currentStringartShape() === "grid") {
+    const side = parseInt(el.stringartGrid.value, 10);
+    return side * side;
+  }
+  return parseInt(el.stringartPins.value, 10);
+}
+
+/** Nail Grid swaps the "Number of pins" slider for "Nails per side". */
+function syncStringartShapeControls() {
+  const isGrid = currentStringartShape() === "grid";
+  el.stringartPinsGroup.hidden = isGrid;
+  el.stringartGridGroup.hidden = !isGrid;
+}
+
+/** Thread needed, shown right under the frame-size field. Re-scaled live from
+ *  the generated line sequence whenever the frame size or unit changes. */
+function updateStringartThreadInfo() {
+  if (!el.stringartThreadInfo) return;
+  let text = "";
+  if (state.renderedMode === "stringart" && state.stringartSequence && state.stringartPositions) {
+    const frameSize = parseFloat(el.stringartFrameSize.value) || 0;
+    const len = estimateStringartThreadLength(state.stringartSequence, state.stringartPositions, frameSize);
+    text = stringartThreadSummary(len, el.stringartFrameSizeUnit.value);
+    if (!text) text = "Enter a frame size to see how much thread you need.";
+  } else {
+    text = "Generate to see how much thread this needs.";
+  }
+  el.stringartThreadInfo.textContent = text;
+  el.stringartThreadInfo.style.whiteSpace = "pre-line";
+}
 
 /** Live "N pins, up to M thread lines" hint below the line-count slider,
  * mirroring updateLithophaneEstimate's live-recompute pattern -- mirrors
  * _update_stringart_estimate. */
 function updateStringartEstimate() {
   if (!el.stringartEstimate || !el.stringartPins || !el.stringartLines) return;
-  const numPins = parseInt(el.stringartPins.value, 10);
+  const numPins = currentStringartPinCount();
   const numLines = parseInt(el.stringartLines.value, 10);
-  let text = `${numPins} pins, up to ${numLines.toLocaleString()} thread lines`;
+  let text;
+  if (currentStringartShape() === "grid") {
+    const side = parseInt(el.stringartGrid.value, 10);
+    text = `${side} x ${side} = ${numPins} nails, up to ${numLines.toLocaleString()} thread lines`;
+  } else {
+    text = `${numPins} pins, up to ${numLines.toLocaleString()} thread lines`;
+  }
   if (numPins >= 250 && numLines >= 2000) {
     text += " — higher settings take longer to generate (several seconds)";
   }
@@ -1998,6 +2065,10 @@ function updateStringartEstimate() {
 
 el.stringartPins.addEventListener("input", () => {
   el.stringartPinsVal.textContent = el.stringartPins.value;
+  updateStringartEstimate();
+});
+el.stringartGrid.addEventListener("input", () => {
+  el.stringartGridVal.textContent = el.stringartGrid.value;
   updateStringartEstimate();
 });
 el.stringartLines.addEventListener("input", () => {
@@ -3141,16 +3212,19 @@ async function generateScrewartMosaic() {
 }
 
 el.exportScrewartGuideBtn.addEventListener("click", exportScrewartBuildGuide);
+function screwartGuidePages() {
+  const { renderedGridW: screwsWide, renderedGridH: screwsTall, renderedCellSize: cellSize,
+    screwartRenderedMinDepthMm: minDepth, screwartRenderedMaxDepthMm: maxDepth } = state;
+  const page1 = renderScrewartBuildSheet(state.screwartDepthGrid, screwsWide, screwsTall, cellSize, makeCanvas,
+    { mask: exportMask(screwsWide, screwsTall) });
+  const page2 = renderScrewartInfoPage(state.screwartDepthGrid, screwsWide, screwsTall, minDepth, maxDepth, makeCanvas,
+    { mask: exportMask(screwsWide, screwsTall) });
+  return [page1, page2];
+}
 el.previewScrewartGuideBtn.addEventListener("click", () => {
   if (!state.screwartDepthGrid) return;
   try {
-    const { renderedGridW: screwsWide, renderedGridH: screwsTall, renderedCellSize: cellSize,
-      screwartRenderedMinDepthMm: minDepth, screwartRenderedMaxDepthMm: maxDepth } = state;
-    const page1 = renderScrewartBuildSheet(state.screwartDepthGrid, screwsWide, screwsTall, cellSize, makeCanvas,
-      { mask: exportMask(screwsWide, screwsTall) });
-    const page2 = renderScrewartInfoPage(state.screwartDepthGrid, screwsWide, screwsTall, minDepth, maxDepth, makeCanvas,
-      { mask: exportMask(screwsWide, screwsTall) });
-    openPdfExportPreviewDialog("Preview: Screw Art Build Guide (PDF)", [page1, page2], exportScrewartBuildGuide);
+    openPdfExportPreviewDialog("Preview: Screw Art Build Guide (PDF)", screwartGuidePages(), exportScrewartBuildGuide);
   } catch (err) {
     setStatus(`Error building Screw Art build guide preview: ${err.message}`);
     console.error(err);
@@ -3234,7 +3308,10 @@ function updateHalftoneEstimate() {
   }
   if (state.renderedMode === "halftone" && state.halftone) {
     const sizes = halftoneSizeCounts(state.halftone.diam, exportMask(state.halftone.w, state.halftone.h), pitch);
-    if (sizes.length > 0 && sizes.length <= 12) text += `\n${sizes.length} distinct sizes in the current result`;
+    if (sizes.length > 0 && sizes.length <= 12) {
+      text += `\n${sizes.length} distinct sizes in the current result`;
+      if (pitch > 0) text += ": " + sizes.map(([, n, mm]) => `${formatNumberTrim(Math.round(mm * 100) / 100)} mm \u00d7${n}`).join(", ");
+    }
   }
   el.halftoneEstimate.textContent = text;
   updatePhysicalSizeEstimate();
@@ -3261,6 +3338,19 @@ for (const id of ["halftoneDotColor", "halftoneBgColor"]) {
     if (state.renderedMode === "halftone" && state.halftone) rerenderCurrent(false);
   });
 }
+function syncHalftoneBitsUi() {
+  for (const id of ["halftoneMax", "halftoneMin", "halftoneSteps"]) el[id].disabled = el.halftoneUseBits.checked;
+}
+el.halftoneUseBits.addEventListener("change", syncHalftoneBitsUi);
+el.halftoneBitsFillBtn.addEventListener("click", () => {
+  const pitch = halftonePitchMm();
+  if (!(pitch > 0)) { setStatus("Set the dot spacing in Piece size first."); return; }
+  const steps = parseInt(el.halftoneSteps.value, 10);
+  const bits = halftoneSuggestBits(pitch, parseInt(el.halftoneMin.value, 10), parseInt(el.halftoneMax.value, 10),
+    steps >= 2 ? steps : 4);
+  el.halftoneBits.value = bits.join(", ");
+  setStatus("Filled drill sizes \u2014 edit them to match the bits you own, then Generate.");
+});
 el.halftoneGenerateBtn.addEventListener("click", generateHalftoneMosaic);
 
 async function generateHalftoneMosaic() {
@@ -3268,7 +3358,7 @@ async function generateHalftoneMosaic() {
   const w = parseInt(el.halftoneWide.value, 10), h = parseInt(el.halftoneTall.value, 10);
   const cellSize = parseInt(el.cellSize.value, 10);
   const minPct = parseInt(el.halftoneMin.value, 10), maxPct = parseInt(el.halftoneMax.value, 10);
-  if (maxPct <= minPct) { setStatus("Largest dot must be bigger than the smallest dot."); return; }
+  if (!el.halftoneUseBits.checked && maxPct <= minPct) { setStatus("Largest dot must be bigger than the smallest dot."); return; }
 
   el.halftoneGenerateBtn.disabled = true;
   el.halftoneGenerateBtn.textContent = "Generating...";
@@ -3276,7 +3366,9 @@ async function generateHalftoneMosaic() {
   try {
     const tone = sampleHalftoneToneGrid(state.sourceCanvas, w, h, el.halftoneInvert.checked,
       parseInt(el.halftoneContrast.value, 10) / 100);
-    const diam = halftoneDiameterGrid(tone, minPct, maxPct, parseInt(el.halftoneSteps.value, 10));
+    const diam = el.halftoneUseBits.checked
+      ? halftoneGridFromBits(tone, parseDrillSizes(el.halftoneBits.value), halftonePitchMm())
+      : halftoneDiameterGrid(tone, minPct, maxPct, parseInt(el.halftoneSteps.value, 10));
     state.halftone = { diam, w, h };
     state.palette = null;
     state.colorNames = [];
@@ -3574,8 +3666,8 @@ el.stringartGenerateBtn.addEventListener("click", generateStringartMosaic);
 async function generateStringartMosaic() {
   if (!state.sourceCanvas) { setStatus("Load an image first."); return; }
 
-  const shape = [...el.stringartShapeSeg.children].find(b => b.classList.contains("active")).dataset.shape;
-  const numPins = parseInt(el.stringartPins.value, 10);
+  const shape = currentStringartShape();
+  const numPins = currentStringartPinCount();
   const numLines = parseInt(el.stringartLines.value, 10);
   const frameSize = parseFloat(el.stringartFrameSize.value) || 0;
   const frameSizeUnit = el.stringartFrameSizeUnit.value;
@@ -3623,7 +3715,7 @@ async function generateStringartMosaic() {
 
     setViewMode("output");
     updatePhysicalSizeEstimate();
-    setStatus(`Done — ${sequence.length - 1} thread lines across ${numPins} pins.`);
+    setStatus(`Done — ${sequence.length - 1} thread lines across ${numPins} ${shape === "grid" ? "nails" : "pins"}.`);
     await snapshotRecentProject();
   } catch (err) {
     setStatus(`Error: ${err.message}`);
@@ -3648,7 +3740,8 @@ function buildStringartGuidePages() {
     const start = p * entriesPerPage;
     const end = Math.min(total, start + entriesPerPage);
     const label = `Thread sequence, steps ${start}-${end - 1} of ${total - 1} (page ${p + 1} of ${nPages})`;
-    pages.push(renderStringartSequencePage(state.stringartSequence, start, end, label, makeCanvas));
+    pages.push(renderStringartSequencePage(state.stringartSequence, start, end, label, makeCanvas,
+      { labels: stringartPinLabels(state.stringartShape, state.stringartPositions.length) }));
   }
   return pages;
 }
@@ -3772,13 +3865,15 @@ async function generateDiceMosaic() {
 
   try {
     const grayGrid = imageToGrayGrid(state.sourceCanvas, gridW, gridH);
-    const levels = pipLevelBrightness(dieColor, pipColor);
+    const blankOne = el.diceBlankOne.checked;
+    const levels = pipLevelBrightness(dieColor, pipColor, blankOne);
     const stretched = stretchToRange(grayGrid, Math.min(...levels), Math.max(...levels));
     const pipGrid = ditherToPips(stretched, gridW, gridH, levels);
     const outputCanvas = renderDiceMosaic(pipGrid, gridW, gridH, cellSize, dieColor, pipColor,
-      state.bgColor, makeCanvas);
+      state.bgColor, makeCanvas, { blankOne, mask: exportMask(gridW, gridH) });
 
     state.dicePipGrid = pipGrid;
+    state.diceBlankOne = blankOne;
     state.renderedMode = "dice";
     state.renderedCellSize = cellSize;
     state.renderedGridW = gridW;
@@ -3809,16 +3904,19 @@ async function generateDiceMosaic() {
 }
 
 el.exportDiceGuideBtn.addEventListener("click", exportDiceBuildGuide);
+function diceGuidePages() {
+  const { renderedGridW: gridW, renderedGridH: gridH, renderedCellSize: cellSize } = state;
+  const page1 = renderDiceMosaic(state.dicePipGrid, gridW, gridH, cellSize,
+    [255, 255, 255], [20, 20, 20], [255, 255, 255], makeCanvas,
+    { outlineColor: [150, 150, 150], mask: exportMask(gridW, gridH), blankOne: state.diceBlankOne });
+  const page2 = renderDiceKey(state.dicePipGrid, [255, 255, 255], [20, 20, 20], makeCanvas,
+    { mask: exportMask(gridW, gridH), blankOne: state.diceBlankOne });
+  return [page1, page2];
+}
 el.previewDiceGuideBtn.addEventListener("click", () => {
   if (!state.dicePipGrid) return;
   try {
-    const { renderedGridW: gridW, renderedGridH: gridH, renderedCellSize: cellSize } = state;
-    const page1 = renderDiceMosaic(state.dicePipGrid, gridW, gridH, cellSize,
-      [255, 255, 255], [20, 20, 20], [255, 255, 255], makeCanvas,
-      { outlineColor: [150, 150, 150], mask: exportMask(gridW, gridH) });
-    const page2 = renderDiceKey(state.dicePipGrid, [255, 255, 255], [20, 20, 20], makeCanvas,
-      { mask: exportMask(gridW, gridH) });
-    openPdfExportPreviewDialog("Preview: Dice Build Guide (PDF)", [page1, page2], exportDiceBuildGuide);
+    openPdfExportPreviewDialog("Preview: Dice Build Guide (PDF)", diceGuidePages(), exportDiceBuildGuide);
   } catch (err) {
     setStatus(`Error building dice build guide preview: ${err.message}`);
     console.error(err);
@@ -3834,9 +3932,9 @@ function exportDiceBuildGuide() {
     // die/pip colors, so the guide is usable printed in black & white.
     const page1 = renderDiceMosaic(state.dicePipGrid, gridW, gridH, cellSize,
       [255, 255, 255], [20, 20, 20], [255, 255, 255], makeCanvas,
-      { outlineColor: [150, 150, 150], mask: exportMask(gridW, gridH) });
+      { outlineColor: [150, 150, 150], mask: exportMask(gridW, gridH), blankOne: state.diceBlankOne });
     const page2 = renderDiceKey(state.dicePipGrid, [255, 255, 255], [20, 20, 20], makeCanvas,
-      { mask: exportMask(gridW, gridH) });
+      { mask: exportMask(gridW, gridH), blankOne: state.diceBlankOne });
 
     const doc = new jspdf.jsPDF({
       unit: "px",
@@ -3858,12 +3956,12 @@ el.exportDiceShoppingBtn.addEventListener("click", exportDiceShoppingList);
 el.previewDiceShoppingBtn.addEventListener("click", () => {
   if (!state.dicePipGrid) return;
   openTextExportPreviewDialog("Preview: Dice Shopping List (CSV)",
-    buildDiceShoppingListCsv(state.dicePipGrid, getPrice(el.dicePrice), exportMask(state.renderedGridW, state.renderedGridH)), exportDiceShoppingList);
+    buildDiceShoppingListCsv(state.dicePipGrid, getPrice(el.dicePrice), exportMask(state.renderedGridW, state.renderedGridH), state.diceBlankOne), exportDiceShoppingList);
 });
 
 function exportDiceShoppingList() {
   if (!state.dicePipGrid) return;
-  downloadText(buildDiceShoppingListCsv(state.dicePipGrid, getPrice(el.dicePrice), exportMask(state.renderedGridW, state.renderedGridH)), "dice_shopping_list.csv", "text/csv");
+  downloadText(buildDiceShoppingListCsv(state.dicePipGrid, getPrice(el.dicePrice), exportMask(state.renderedGridW, state.renderedGridH), state.diceBlankOne), "dice_shopping_list.csv", "text/csv");
   setStatus("Saved dice_shopping_list.csv");
 }
 
@@ -3942,15 +4040,18 @@ async function generateRubiksMosaic() {
 }
 
 el.exportRubiksGuideBtn.addEventListener("click", exportRubiksBuildGuide);
+function rubiksGuidePages() {
+  const { renderedGridW: gridW, renderedGridH: gridH, renderedCellSize: cellSize } = state;
+  const page1 = renderRubiksBuildSheet(state.rubiksGrid, gridW, gridH, cellSize, makeCanvas,
+    { cubeMask: rubiksCubeMaskForExport() });
+  const page2 = renderRubiksKey(state.rubiksGrid, state.rubiksPalette, gridW, gridH, makeCanvas,
+    { cubeMask: rubiksCubeMaskForExport() });
+  return [page1, page2];
+}
 el.previewRubiksGuideBtn.addEventListener("click", () => {
   if (!state.rubiksGrid) return;
   try {
-    const { renderedGridW: gridW, renderedGridH: gridH, renderedCellSize: cellSize } = state;
-    const page1 = renderRubiksBuildSheet(state.rubiksGrid, gridW, gridH, cellSize, makeCanvas,
-      { cubeMask: rubiksCubeMaskForExport() });
-    const page2 = renderRubiksKey(state.rubiksGrid, state.rubiksPalette, gridW, gridH, makeCanvas,
-      { cubeMask: rubiksCubeMaskForExport() });
-    openPdfExportPreviewDialog("Preview: Cube Build Guide (PDF)", [page1, page2], exportRubiksBuildGuide);
+    openPdfExportPreviewDialog("Preview: Cube Build Guide (PDF)", rubiksGuidePages(), exportRubiksBuildGuide);
   } catch (err) {
     setStatus(`Error building Rubik's Cube build guide preview: ${err.message}`);
     console.error(err);
@@ -4200,9 +4301,7 @@ async function generateCrossStitchMosaic() {
 }
 
 el.exportCrossStitchPatternBtn.addEventListener("click", exportCrossStitchPattern);
-el.previewCrossStitchPatternBtn.addEventListener("click", () => {
-  if (!state.crossStitchGrid) return;
-  try {
+function crossStitchPatternPages() {
     const { renderedGridW: gridW, renderedGridH: gridH } = state;
     const patternCellSize = 22;
     const maxStitchesPerPage = 50;
@@ -4223,8 +4322,12 @@ el.previewCrossStitchPatternBtn.addEventListener("click", () => {
 
     const counts = dmcColorCounts(state.crossStitchGrid, exportMask(state.renderedGridW, state.renderedGridH));
     pages.push(renderCrossStitchLegendPage(counts, symbolMap, makeCanvas));
-
-    openPdfExportPreviewDialog("Preview: Pattern Chart (PDF)", pages, exportCrossStitchPattern);
+    return pages;
+}
+el.previewCrossStitchPatternBtn.addEventListener("click", () => {
+  if (!state.crossStitchGrid) return;
+  try {
+    openPdfExportPreviewDialog("Preview: Pattern Chart (PDF)", crossStitchPatternPages(), exportCrossStitchPattern);
   } catch (err) {
     setStatus(`Error building cross-stitch pattern preview: ${err.message}`);
     console.error(err);
@@ -4551,15 +4654,18 @@ function exportFoundObjectCsv() {
 }
 
 el.exportFoundObjectPdfBtn.addEventListener("click", exportFoundObjectPdf);
+function foundObjectPdfPages() {
+  const page1 = renderPaintByNumber(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
+    state.foundObjectPalette, "square", state.renderedCellSize, makeCanvas);
+  const names = foundObjectColorNames();
+  const counts = colorCounts(state.foundObjectQuantizedGrid, state.foundObjectPalette, names, exportMask(state.gridW, state.gridH));
+  const page2 = renderColorKey(state.foundObjectPalette, names, counts, makeCanvas);
+  return [page1, page2];
+}
 el.previewFoundObjectPdfBtn.addEventListener("click", () => {
   if (!state.foundObjectQuantizedGrid) return;
   try {
-    const page1 = renderPaintByNumber(state.foundObjectQuantizedGrid, state.gridW, state.gridH,
-      state.foundObjectPalette, "square", state.renderedCellSize, makeCanvas);
-    const names = foundObjectColorNames();
-    const counts = colorCounts(state.foundObjectQuantizedGrid, state.foundObjectPalette, names, exportMask(state.gridW, state.gridH));
-    const page2 = renderColorKey(state.foundObjectPalette, names, counts, makeCanvas);
-    openPdfExportPreviewDialog("Preview: Build Guide (PDF)", [page1, page2], exportFoundObjectPdf);
+    openPdfExportPreviewDialog("Preview: Build Guide (PDF)", foundObjectPdfPages(), exportFoundObjectPdf);
   } catch (err) {
     setStatus(`Error building object build guide preview: ${err.message}`);
     console.error(err);
@@ -5378,15 +5484,18 @@ function exportCsv() {
 }
 
 el.exportPaintByNumberBtn.addEventListener("click", exportPaintByNumber);
+function paintByNumberPages() {
+  const page1 = renderPaintByNumber(state.quantizedGrid, state.gridW, state.gridH,
+    state.palette, state.renderedShape, state.renderedCellSize, makeCanvas,
+    { circleInterlock: state.renderedCircleInterlock, diamondInterlock: state.renderedDiamondInterlock });
+  const counts = colorCounts(state.quantizedGrid, state.palette, state.colorNames);
+  const page2 = renderColorKey(state.palette, state.colorNames, counts, makeCanvas);
+  return [page1, page2];
+}
 el.previewPaintByNumberBtn.addEventListener("click", () => {
   if (!state.quantizedGrid) return;
   try {
-    const page1 = renderPaintByNumber(state.quantizedGrid, state.gridW, state.gridH,
-      state.palette, state.renderedShape, state.renderedCellSize, makeCanvas,
-      { circleInterlock: state.renderedCircleInterlock, diamondInterlock: state.renderedDiamondInterlock });
-    const counts = colorCounts(state.quantizedGrid, state.palette, state.colorNames);
-    const page2 = renderColorKey(state.palette, state.colorNames, counts, makeCanvas);
-    openPdfExportPreviewDialog("Preview: Paint-by-Number (PDF)", [page1, page2], exportPaintByNumber);
+    openPdfExportPreviewDialog("Preview: Paint-by-Number (PDF)", paintByNumberPages(), exportPaintByNumber);
   } catch (err) {
     setStatus(`Error building paint-by-number preview: ${err.message}`);
     console.error(err);
@@ -5875,6 +5984,7 @@ function collectSettings() {
       adaptiveRectangles: el.adaptiveRectangles.checked,
 
       dieColor: rgbToHex(state.dieColor),
+      diceBlankOne: el.diceBlankOne.checked,
       pipColor: rgbToHex(state.pipColor),
 
       cubesWide: parseInt(el.cubesWide.value, 10),
@@ -5934,6 +6044,8 @@ function collectSettings() {
       halftoneContrast: parseInt(el.halftoneContrast.value, 10),
       halftoneInvert: el.halftoneInvert.checked,
       halftoneTile: el.halftoneTile.checked,
+      halftoneUseBits: el.halftoneUseBits.checked,
+      halftoneBits: el.halftoneBits.value,
       halftoneDotColor: el.halftoneDotColor.value,
       halftoneBgColor: el.halftoneBgColor.value,
 
@@ -5949,8 +6061,9 @@ function collectSettings() {
       stencilOverlap: el.stencilOverlap.checked,
       stencilWidthIn: parseFloat(el.stencilWidthIn.value) || 8,
 
-      stringartShape: [...el.stringartShapeSeg.children].find(b => b.classList.contains("active")).dataset.shape,
+      stringartShape: currentStringartShape(),
       stringartNumPins: parseInt(el.stringartPins.value, 10),
+      stringartGridSize: parseInt(el.stringartGrid.value, 10),
       stringartNumLines: parseInt(el.stringartLines.value, 10),
       stringartFrameSize: parseFloat(el.stringartFrameSize.value) || 0,
       stringartFrameSizeUnit: el.stringartFrameSizeUnit.value,
@@ -6032,6 +6145,7 @@ function applySettings(data) {
     state.adaptiveRectangles = s.adaptiveRectangles;
   }
 
+  if (typeof s.diceBlankOne === "boolean") el.diceBlankOne.checked = s.diceBlankOne;
   if (s.dieColor) { state.dieColor = hexToRgb(s.dieColor); setSwatchButton(el.dieColorBtn, state.dieColor); el.dieColorPicker.value = s.dieColor; }
   if (s.pipColor) { state.pipColor = hexToRgb(s.pipColor); setSwatchButton(el.pipColorBtn, state.pipColor); el.pipColorPicker.value = s.pipColor; }
 
@@ -6143,6 +6257,8 @@ function applySettings(data) {
   if (typeof s.halftoneLockAspect === "boolean") el.lockAspectHalftone.checked = s.halftoneLockAspect;
   if (typeof s.halftoneInvert === "boolean") el.halftoneInvert.checked = s.halftoneInvert;
   if (typeof s.halftoneTile === "boolean") el.halftoneTile.checked = s.halftoneTile;
+  if (typeof s.halftoneUseBits === "boolean") { el.halftoneUseBits.checked = s.halftoneUseBits; syncHalftoneBitsUi(); }
+  if (typeof s.halftoneBits === "string") el.halftoneBits.value = s.halftoneBits;
   if (/^#[0-9a-f]{6}$/i.test(s.halftoneDotColor || "")) el.halftoneDotColor.value = s.halftoneDotColor;
   if (/^#[0-9a-f]{6}$/i.test(s.halftoneBgColor || "")) el.halftoneBgColor.value = s.halftoneBgColor;
   updateHalftoneEstimate();
@@ -6164,8 +6280,13 @@ function applySettings(data) {
   syncStencilColorPickers();
   updateStencilEstimate();
 
-  if (s.stringartShape === "circle" || s.stringartShape === "rect") {
+  if (s.stringartShape === "circle" || s.stringartShape === "rect" || s.stringartShape === "grid") {
     [...el.stringartShapeSeg.children].forEach(b => b.classList.toggle("active", b.dataset.shape === s.stringartShape));
+    syncStringartShapeControls();
+  }
+  if (Number.isFinite(s.stringartGridSize)) {
+    el.stringartGrid.value = s.stringartGridSize;
+    el.stringartGridVal.textContent = s.stringartGridSize;
   }
   if (Number.isFinite(s.stringartNumPins)) {
     el.stringartPins.value = s.stringartNumPins;
@@ -6451,3 +6572,293 @@ updateRadialCellEstimate();
 updateStainedglassPieceEstimate();
 updateLeadedglassEstimate();
 refreshPreview();
+
+
+// ---------------------------------------------------------------------------
+// Product Kit (sellable bundle: branded PDF + listing images + listing text)
+// ---------------------------------------------------------------------------
+const KIT_MODE_LABELS = { classic: "Classic Grid", dice: "Dice", rubiks: "Rubik's Cube", crossstitch: "Cross-Stitch",
+  foundobject: "Found Object", screwart: "Screw Art", stringart: "String Art", stencil: "Stencil", halftone: "Halftone Dots" };
+
+function kitSizeText(w, h) {
+  const piece = parseFloat(el.pieceSize.value) || 0;
+  return formatPhysicalSize(w, h, piece, el.pieceSizeUnit.value).split("  (")[0];
+}
+
+/** Re-matches the classic grid to a fixed brand palette ([{name, rgb}]) without touching the user's settings. */
+function kitClassicVariant(mode, entries) {
+  const w = state.renderedGridW, h = state.renderedGridH, cell = state.renderedCellSize;
+  const grid = imageToGrid(state.sourceCanvas, w, h);
+  const result = quantizeToFixedPalette(grid, entries.map((e) => e.rgb));
+  const q = Array.from(result.labels).map((l) => entries[l].rgb);
+  const keyOf = (c) => c.join(",");
+  const usedKeys = new Set(q.map(keyOf));
+  const used = entries.filter((e) => usedKeys.has(keyOf(e.rgb)));
+  const pal = used.map((e) => e.rgb), names = used.map((e) => e.name);
+  const counts = colorCounts(q, pal, names);
+  const pages = [
+    renderPaintByNumber(q, w, h, pal, "square", cell, makeCanvas),
+    renderColorKey(pal, names, counts, makeCanvas),
+  ];
+  const preview = renderMosaic(q, w, h, "square", cell, [18, 18, 20], makeCanvas);
+  const stats = { shape: state.shapeType, w, h, pieces: w * h, colors: pal.length };
+  const data = {};
+  const cm = (n) => formatNumberTrim(Math.round(n * 10) / 10);
+  if (mode === "classic_lego") {
+    const bricks = computeBrickLayout(q, w, h, LEGO_BRICK_SIZES);
+    pages.push(renderBrickMosaic(bricks, cell, [18, 18, 20], makeCanvas));
+    Object.assign(stats, { bricks: bricks.length, size_text: `${cm(w * 0.8)} \u00d7 ${cm(h * 0.8)} cm` });
+    data["brick_parts_list.csv"] = buildShoppingListCsv(bricks, pal, names);
+  } else {
+    Object.assign(stats, { pegboards: Math.ceil(w / 29) * Math.ceil(h / 29), size_text: `${cm(w * 0.5)} \u00d7 ${cm(h * 0.5)} cm` });
+  }
+  data["color_counts.csv"] = buildPaletteCsv(q, pal, names, null);
+  return { mode, stats, preview, pages, data };
+}
+
+/** Gathers pattern pages, stats and data files for the rendered mode. Throws Error with a friendly message. */
+function collectKit() {
+  const mode = state.renderedMode;
+  if (!state.outputCanvas || !mode) throw new Error("Generate a pattern first, then export the Product Kit.");
+  if (!KIT_MODES.includes(mode)) {
+    throw new Error(`The Product Kit isn't available for this mode yet. It supports: ${KIT_MODES.map((m) => KIT_MODE_LABELS[m]).join(", ")}.`);
+  }
+  const shape = state.shapeType;
+  const masked = (w, h) => (shape === "oval" || shape === "circle" ? shapePieceCount(shape, w, h) : w * h);
+  let stats = { shape };
+  const data = {};
+  let pages;
+  let variants = [];
+  const gw = state.renderedGridW, gh = state.renderedGridH;
+  if (mode === "classic") {
+    Object.assign(stats, { w: gw, h: gh, pieces: masked(gw, gh), colors: state.palette.length, size_text: kitSizeText(gw, gh) });
+    pages = paintByNumberPages();
+    variants = [kitClassicVariant("classic_lego", LEGO_SOLID_COLORS), kitClassicVariant("classic_perler", PERLER_BEAD_COLORS)];
+  } else if (mode === "foundobject") {
+    const w = state.gridW, h = state.gridH;
+    Object.assign(stats, { w, h, pieces: masked(w, h), colors: state.foundObjectPalette.length, size_text: kitSizeText(w, h) });
+    pages = foundObjectPdfPages();
+  } else if (mode === "dice") {
+    Object.assign(stats, { w: gw, h: gh, pieces: masked(gw, gh), size_text: kitSizeText(gw, gh) });
+    pages = diceGuidePages();
+    data["dice_shopping_list.csv"] = buildDiceShoppingListCsv(state.dicePipGrid, null, exportMask(gw, gh), state.diceBlankOne);
+  } else if (mode === "rubiks") {
+    const w = Math.floor(gw / 3), h = Math.floor(gh / 3);
+    Object.assign(stats, { w, h, pieces: masked(w, h), size_text: kitSizeText(w, h) });
+    pages = rubiksGuidePages();
+    data["rubiks_shopping_list.csv"] = buildRubiksShoppingListCsv(state.rubiksGrid, state.rubiksPalette, gw, gh, null, rubiksCubeMaskForExport());
+  } else if (mode === "crossstitch") {
+    const used = dmcColorCounts(state.crossStitchGrid, exportMask(gw, gh)).filter((c) => c.count > 0).length;
+    Object.assign(stats, { w: gw, h: gh, pieces: masked(gw, gh), colors: used, size_text: kitSizeText(gw, gh) });
+    pages = crossStitchPatternPages();
+  } else if (mode === "screwart") {
+    Object.assign(stats, { w: gw, h: gh, pieces: masked(gw, gh), size_text: kitSizeText(gw, gh),
+      depth_text: `${formatNumberTrim(state.screwartRenderedMinDepthMm)} - ${formatNumberTrim(state.screwartRenderedMaxDepthMm)} mm` });
+    pages = screwartGuidePages();
+    data["screw_depth_list.csv"] = buildScrewartDepthCsv(state.screwartDepthGrid, gw, gh, exportMask(gw, gh));
+  } else if (mode === "stringart") {
+    const unit = state.stringartFrameSizeUnit;
+    const length = state.stringartThreadLength || 0;
+    stats = { shape: state.stringartShape, pins: state.stringartNumPins, lines: state.stringartSequence.length - 1 };
+    const frameSize = parseFloat(el.stringartFrameSize.value) || 0;
+    const ft = formatStringartFrameSize(state.stringartShape, frameSize, unit);
+    if (ft) stats.frame_text = ft.split(": ").slice(1).join(": ");
+    if (state.stringartShape === "grid") {
+      const side = stringartGridSide(state.stringartNumPins);
+      stats.grid_text = `${side} x ${side}`;
+      if (frameSize > 0) stats.spacing_text = `${formatNumberTrim(Math.round(frameSize / (side - 1) * 100) / 100)} ${unit}`;
+    }
+    if (length > 0) {
+      const meters = length * ({ in: 0.0254, cm: 0.01, mm: 0.001 }[unit] || 0.0254);
+      const spare = 1 + STRINGART_THREAD_SPARE;
+      const f1 = (v) => formatNumberTrim(Math.floor(v * 10 + 0.5) / 10);
+      stats.thread_text = `${f1(meters * spare / 0.3048)} ft (${f1(meters * spare)} m)`;
+    }
+    pages = buildStringartGuidePages();
+  } else if (mode === "stencil") {
+    stats = { layers: state.stencil.layers.length, width_in_text: `${formatNumberTrim(state.stencil.widthIn)} in` };
+    pages = stencilPrintPages();
+  } else { // halftone
+    const { diam, w, h } = state.halftone;
+    const pitch = halftonePitchMm();
+    const mask = exportMask(w, h);
+    const sizes = halftoneSizeCounts(diam, mask, pitch);
+    Object.assign(stats, { w, h, pieces: masked(w, h), sizes: sizes.length <= 12 ? sizes.length : "many", size_text: kitSizeText(w, h) });
+    if (pitch > 0) {
+      stats.pitch_text = `${formatNumberTrim(Math.round(pitch * 100) / 100)} mm`;
+      if (sizes.length <= 12) stats.bits_text = sizes.filter(([, , mm]) => mm).map(([, , mm]) => `${formatNumberTrim(Math.round(mm * 100) / 100)} mm`).join(", ");
+    }
+    pages = halftonePrintPages();
+    data["halftone_dots.csv"] = halftoneCsv();
+    data["halftone_dots.svg"] = halftoneSvgText(diam, w, h, pitch, mask, hexToRgb(el.halftoneDotColor.value));
+  }
+  return { mode, stats, preview: state.outputCanvas, pages, data, variants };
+}
+
+function loadImageFromDataUrl(url) {
+  return new Promise((resolve) => {
+    if (!url) return resolve(null);
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+/** Saved branding with the logo resolved to an Image (or null). */
+async function loadKitBranding() {
+  const raw = loadBranding() || {};
+  const b = normalizeBranding(raw);
+  b.logo = await loadImageFromDataUrl(raw.logoData);
+  return b;
+}
+
+function labeledInput(labelText, input) {
+  const wrap = document.createElement("div");
+  wrap.className = "kit-field";
+  const lab = document.createElement("label");
+  lab.textContent = labelText;
+  wrap.append(lab, input);
+  return wrap;
+}
+
+async function openBrandingDialog() {
+  const raw = loadBranding() || {};
+  const b = normalizeBranding(raw);
+  const body = document.createElement("div");
+  body.className = "kit-dialog";
+  const mk = (value, type = "text") => { const i = document.createElement("input"); i.type = type; i.value = value; return i; };
+  const inputs = {
+    shop_name: mk(b.shop_name), website: mk(b.website), copyright: mk(b.copyright), thank_you: mk(b.thank_you),
+  };
+  inputs.shop_name.id = "kitShopName"; inputs.website.id = "kitWebsite"; inputs.copyright.id = "kitCopyright";
+  inputs.thank_you.id = "kitThankYou";
+  body.append(
+    labeledInput("Shop name", inputs.shop_name),
+    labeledInput("Website / shop link", inputs.website),
+    labeledInput("Copyright line (e.g. \u00a9 2026 My Shop)", inputs.copyright),
+    labeledInput("Thank-you message", inputs.thank_you));
+  const lic = document.createElement("textarea");
+  lic.id = "kitLicense"; lic.rows = 4; lic.value = b.license_text;
+  body.appendChild(labeledInput("License text (blank = default personal-use license)", lic));
+  const accent = mk("#" + b.accent.map((c) => c.toString(16).padStart(2, "0")).join(""), "color");
+  accent.id = "kitAccent";
+  body.appendChild(labeledInput("Accent colour", accent));
+  let logoData = raw.logoData || "";
+  const file = document.createElement("input");
+  file.type = "file"; file.accept = "image/*"; file.id = "kitLogoFile";
+  const logoNote = document.createElement("span");
+  logoNote.className = "hint-inline";
+  logoNote.textContent = logoData ? "Logo set" : "No logo";
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button"; clearBtn.textContent = "Clear logo";
+  clearBtn.addEventListener("click", () => { logoData = ""; logoNote.textContent = "No logo"; file.value = ""; });
+  file.addEventListener("change", async () => {
+    const f = file.files[0];
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    const img = await loadImageFromDataUrl(url);
+    URL.revokeObjectURL(url);
+    if (!img) { logoNote.textContent = "Couldn't read that image"; return; }
+    const scale = Math.min(1, 600 / Math.max(img.width, img.height));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(img.width * scale)); c.height = Math.max(1, Math.round(img.height * scale));
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    logoData = c.toDataURL("image/png");
+    logoNote.textContent = "Logo set";
+  });
+  const logoRow = labeledInput("Logo (optional)", file);
+  logoRow.append(clearBtn, logoNote);
+  body.appendChild(logoRow);
+  const note = document.createElement("p");
+  note.className = "hint-inline";
+  note.textContent = "Saved in this browser only. Leave everything blank for a clean, unbranded layout.";
+  body.appendChild(note);
+  showDialog({
+    title: "Shop branding", bodyEl: body, wide: true,
+    actions: [
+      { label: "Cancel", onClick: closeDialog },
+      { label: "Save", primary: true, onClick: () => {
+        const ok = saveBranding({
+          shop_name: inputs.shop_name.value.trim(), website: inputs.website.value.trim(),
+          copyright: inputs.copyright.value.trim(), thank_you: inputs.thank_you.value.trim(),
+          license_text: lic.value.trim(), accent: parseHexColor(accent.value, DEFAULT_ACCENT), logoData,
+        });
+        setStatus(ok ? "Saved shop branding." : "Couldn't save branding (browser storage unavailable).");
+        closeDialog();
+      } },
+    ],
+  });
+}
+
+async function openKitDialog() {
+  let info;
+  try {
+    info = collectKit();
+  } catch (err) {
+    setStatus(err.message);
+    showDialog({ title: "Product Kit", bodyEl: Object.assign(document.createElement("p"), { textContent: err.message }),
+      actions: [{ label: "OK", primary: true, onClick: closeDialog }] });
+    return;
+  }
+  const kt = kitText(info.mode, info.stats);
+  const brand = await loadKitBranding();
+  const body = document.createElement("div");
+  body.className = "kit-dialog";
+  const title = document.createElement("input"); title.type = "text"; title.value = kt.title; title.id = "kitTitle";
+  const subtitle = document.createElement("input"); subtitle.type = "text"; subtitle.value = kt.subtitle; subtitle.id = "kitSubtitle";
+  body.append(labeledInput("Product title", title), labeledInput("Subtitle (blank = none)", subtitle));
+  const checks = {};
+  for (const [key, label] of [["letter", "PDF \u2014 US Letter"], ["a4", "PDF \u2014 A4"],
+    ["images", "Etsy listing images (5)"], ["listing", "Listing title, description and tags"]]) {
+    const row = document.createElement("label");
+    row.className = "kit-check";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = true; cb.id = "kitOpt_" + key;
+    row.append(cb, document.createTextNode(" " + label));
+    body.appendChild(row);
+    checks[key] = cb;
+  }
+  const bn = document.createElement("p");
+  bn.className = "hint-inline";
+  bn.textContent = "Branding: " + (brand.shop_name || "none set (clean layout) \u2014 use Shop branding\u2026 to add yours");
+  const status = document.createElement("p");
+  status.className = "hint-inline"; status.id = "kitStatus";
+  body.append(bn, status);
+  const buttons = showDialog({
+    title: "Export Product Kit", bodyEl: body, wide: true,
+    actions: [
+      { label: "Close", onClick: closeDialog },
+      { label: "Build ZIP", primary: true, onClick: async () => {
+        const papers = ["letter", "a4"].filter((p) => checks[p].checked);
+        if (!papers.length) { status.textContent = "Pick at least one PDF size."; return; }
+        buttons.forEach((b) => { b.disabled = true; });
+        status.textContent = "Building\u2026 this can take a few seconds.";
+        try {
+          const res = await buildKitZip({ mode: info.mode, stats: info.stats, preview: info.preview, patternImages: info.pages,
+            brand, title: title.value, subtitle: subtitle.value, papers, images: checks.images.checked,
+            listing: checks.listing.checked, dataFiles: info.data, variants: info.variants });
+          downloadBlob(res.blob, `${res.slug}_kit.zip`);
+          setStatus(`Saved Product Kit (${res.pages} pages) as ${res.slug}_kit.zip`);
+          closeDialog();
+        } catch (err) {
+          console.error(err);
+          status.textContent = `Error: ${err.message}`;
+          buttons.forEach((b) => { b.disabled = false; });
+        }
+      } },
+    ],
+  });
+}
+
+// The Product Kit is hidden on the public site. The owner unlocks it in their own browser with
+// localStorage.setItem("pixelMosaicKitUnlock", "1") (then reload). Remove the gate to ship it publicly.
+function productKitUnlocked() {
+  try { return localStorage.getItem("pixelMosaicKitUnlock") === "1"; } catch (e) { return false; }
+}
+if (productKitUnlocked()) {
+  $("kitSection").hidden = false;
+  $("kitButtons").hidden = false;
+  el.kitBrandingBtn.addEventListener("click", openBrandingDialog);
+  el.kitExportBtn.addEventListener("click", openKitDialog);
+}

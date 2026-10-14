@@ -234,6 +234,8 @@
       <button id="pipColorBtn" class="color-swatch-btn">#ebebeb</button>
       <input type="color" id="pipColorPicker" value="#ebebeb" hidden>
 
+      <label class="checkbox-label"><input type="checkbox" id="diceBlankOne"> Solid #1 face (no pip)</label>
+
       <div class="button-row"><button id="diceGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
 
       <label>Export</label>
@@ -742,6 +744,14 @@
       <label for="halftoneSteps">Size steps (0 = smooth, else number of drill sizes)</label>
       <div class="slider-row"><input type="range" id="halftoneSteps" min="0" max="12" value="0"><span class="slider-val" id="halftoneStepsVal">0</span></div>
 
+      <label class="checkbox-label"><input type="checkbox" id="halftoneUseBits"> Use my own drill bits (needs Piece size)</label>
+      <div class="piece-size-row">
+        <input type="text" id="halftoneBits" value="1.5, 2, 2.5, 3" placeholder="mm, e.g. 1.5, 2, 3" title="Drill bit diameters in mm, separated by commas">
+        <span>mm</span>
+        <button id="halftoneBitsFillBtn" type="button" title="Fill with evenly spaced sizes from the steps slider">Fill from steps</button>
+      </div>
+      <p class="hint">Uses exactly the bits listed, plus &ldquo;no dot&rdquo; for the lightest tones, from smallest to biggest (so 5 bits = 5 sizes). Ignores Largest / Smallest / Size steps.</p>
+
       <label for="halftoneContrast">Contrast (%)</label>
       <div class="slider-row"><input type="range" id="halftoneContrast" min="50" max="200" value="100"><span class="slider-val" id="halftoneContrastVal">100</span></div>
 
@@ -773,7 +783,8 @@
     </div>
 
     <div id="stringartPanel" hidden>
-      <p class="hint">Pins around a circular or rectangular frame, connected
+      <p class="hint">Pins around a circular or rectangular frame (or a grid
+        of nails across the whole board, "Nail Grid"), connected
         by one continuous thread whose crossings approximate the photo in
         grayscale (monochrome thread only, for now). Number of colors and
         the shared Grid / Cell Size controls above have no effect here --
@@ -783,17 +794,24 @@
       <div class="segmented" id="stringartShapeSeg">
         <button data-shape="circle" class="active" type="button">Circular</button>
         <button data-shape="rect" type="button">Rectangular</button>
+        <button data-shape="grid" type="button">Nail Grid</button>
       </div>
 
-      <label for="stringartPins">Number of pins</label>
-      <div class="slider-row"><input type="range" id="stringartPins" min="60" max="360" value="180"><span class="slider-val" id="stringartPinsVal">180</span></div>
+      <div id="stringartPinsGroup">
+        <label for="stringartPins">Number of pins</label>
+        <div class="slider-row"><input type="range" id="stringartPins" min="60" max="720" value="180"><span class="slider-val" id="stringartPinsVal">180</span></div>
+      </div>
+      <div id="stringartGridGroup" hidden>
+        <label for="stringartGrid">Nails per side</label>
+        <div class="slider-row"><input type="range" id="stringartGrid" min="8" max="26" value="23"><span class="slider-val" id="stringartGridVal">23</span></div>
+      </div>
 
       <label for="stringartLines">Number of lines</label>
-      <div class="slider-row"><input type="range" id="stringartLines" min="50" max="3000" value="1200"><span class="slider-val" id="stringartLinesVal">1200</span></div>
+      <div class="slider-row"><input type="range" id="stringartLines" min="50" max="4000" value="1200"><span class="slider-val" id="stringartLinesVal">1200</span></div>
 
       <p class="hint" id="stringartEstimate"></p>
 
-      <label for="stringartFrameSize">Frame size <span class="hint-inline">(diameter for circular, side length for rectangular)</span></label>
+      <label for="stringartFrameSize">Frame size <span class="hint-inline">(diameter for circular, side length for rectangular; outer nail to outer nail for a nail grid)</span></label>
       <div class="piece-size-row">
         <input type="number" id="stringartFrameSize" min="0" step="0.01" value="12">
         <select id="stringartFrameSizeUnit">
@@ -802,6 +820,7 @@
           <option value="cm">cm</option>
         </select>
       </div>
+      <p class="hint" id="stringartThreadInfo"></p>
 
       <label>Thread color</label>
       <button id="stringartThreadColorBtn" class="color-swatch-btn">#141414</button>
@@ -856,6 +875,12 @@
     <div class="button-row two-up">
       <button id="previewPosterBtn" disabled>Preview...</button>
       <button id="exportPosterBtn" disabled>Save Poster (PDF)</button>
+    </div>
+
+    <label id="kitSection" hidden>Product Kit <span class="hint-inline">(for selling: branded PDF, Etsy images, listing text)</span></label>
+    <div class="button-row two-up" id="kitButtons" hidden>
+      <button id="kitBrandingBtn">Shop branding...</button>
+      <button id="kitExportBtn">Export Product Kit...</button>
     </div>
 
     <p class="footer-note">Pixel Mosaic &mdash; Dadoo Labs</p>
