@@ -88,6 +88,11 @@ import {
   stencilPrepareRgb, buildStencilLayers, stencilLayerStats, stencilSvgText,
   renderStencilComposite, renderStencilSheet, renderStencilPrintPage,
 } from "./core/stencil.js";
+import {
+  RELIEF_WORK_DETAIL, reliefPrepare, reliefAssemble, reliefStats, reliefNodeAt, reliefPieceLoops,
+  reliefSvgFiles, reliefHex, reliefColorName,
+} from "./core/relief.js";
+import { renderReliefPreview, renderReliefCutPages, renderReliefGuidePages } from "./core/reliefRender.js";
 
 // Raised from 240 for Counted Cross-Stitch mode's higher-resolution
 // patterns; applies to every mode since they share these sliders.
@@ -339,6 +344,9 @@ const state = {
   screwartDepthGrid: null,
   // Stencil mode: stencil = last Generate's {layers, w, h, colors, bg, widthIn, overlap}.
   stencil: null,
+  // Layered Relief: {base, order, included, colors, overrides, rel, selected}; reliefClean = preview without the selection outline.
+  relief: null,
+  reliefClean: null,
   halftone: null,
   screwartDepthGrid: null,
   screwartRenderedMinDepthMm: null,
@@ -443,6 +451,19 @@ const el = {
   stencilGenerateBtn: $("stencilGenerateBtn"),
   previewStencilPdfBtn: $("previewStencilPdfBtn"), exportStencilPdfBtn: $("exportStencilPdfBtn"),
   exportStencilSvgBtn: $("exportStencilSvgBtn"), exportStencilOverviewBtn: $("exportStencilOverviewBtn"),
+  reliefPanel: $("reliefPanel"), reliefColors: $("reliefColors"), reliefColorsVal: $("reliefColorsVal"),
+  reliefSmooth: $("reliefSmooth"), reliefSmoothVal: $("reliefSmoothVal"),
+  reliefMinArea: $("reliefMinArea"), reliefMinAreaVal: $("reliefMinAreaVal"),
+  reliefMode: $("reliefMode"), reliefDome: $("reliefDome"), reliefDomeVal: $("reliefDomeVal"),
+  reliefLevels: $("reliefLevels"), reliefLevelsVal: $("reliefLevelsVal"),
+  reliefMaterial: $("reliefMaterial"), reliefThickness: $("reliefThickness"), reliefThicknessRow: $("reliefThicknessRow"),
+  reliefWidthIn: $("reliefWidthIn"), reliefPaper: $("reliefPaper"), reliefShaded: $("reliefShaded"),
+  reliefLayerList: $("reliefLayerList"), reliefPieceHint: $("reliefPieceHint"), reliefPieceControls: $("reliefPieceControls"),
+  reliefPieceInfo: $("reliefPieceInfo"), reliefPieceStep: $("reliefPieceStep"),
+  reliefPieceReset: $("reliefPieceReset"), reliefResetAll: $("reliefResetAll"), reliefSummary: $("reliefSummary"),
+  reliefGenerateBtn: $("reliefGenerateBtn"), exportReliefSvgBtn: $("exportReliefSvgBtn"),
+  exportReliefCutBtn: $("exportReliefCutBtn"), previewReliefGuideBtn: $("previewReliefGuideBtn"),
+  exportReliefGuideBtn: $("exportReliefGuideBtn"),
   colorSourceSeg: $("colorSourceSeg"), colorsLabel: $("colorsLabel"),
   numColors: $("numColors"), numColorsVal: $("numColorsVal"),
   fixedPaletteLabel: $("fixedPaletteLabel"), choosePaletteBtn: $("choosePaletteBtn"),
@@ -568,6 +589,7 @@ const el = {
   stringartShapeSeg: $("stringartShapeSeg"),
   stringartPins: $("stringartPins"), stringartPinsVal: $("stringartPinsVal"),
   stringartGrid: $("stringartGrid"), stringartGridVal: $("stringartGridVal"),
+  stringartReach: $("stringartReach"), stringartReachVal: $("stringartReachVal"),
   stringartPinsGroup: $("stringartPinsGroup"), stringartGridGroup: $("stringartGridGroup"),
   stringartLines: $("stringartLines"), stringartLinesVal: $("stringartLinesVal"),
   stringartEstimate: $("stringartEstimate"), stringartThreadInfo: $("stringartThreadInfo"),
@@ -843,6 +865,7 @@ function onCanvasClick(x, y) {
   if (state.viewMode === "source") sampleSourcePixel(x, y);
   else if (state.viewMode === "bricks") sampleBrickCell(x, y);
   else if (state.viewMode === "compare") return; // composite mixes two coordinate spaces -- no meaningful sample
+  else if (state.renderedMode === "relief") reliefPickAt(x, y);
   else sampleOutputCell(x, y);
 }
 
@@ -1024,6 +1047,8 @@ function applyLoadedImage(canvas, displayName) {
   state.screwartRenderedMinDepthMm = null;
   state.screwartRenderedMaxDepthMm = null;
   state.stencil = null;
+  state.relief = null;
+  state.reliefClean = null;
   state.halftone = null;
   state.renderedMode = state.layoutMode;
   clearBrickLayout();
@@ -1042,6 +1067,7 @@ function applyLoadedImage(canvas, displayName) {
   el.stringartGenerateBtn.disabled = false;
   el.screwartGenerateBtn.disabled = false;
   el.stencilGenerateBtn.disabled = false;
+  el.reliefGenerateBtn.disabled = false;
   el.halftoneGenerateBtn.disabled = false;
   resetSampleDisplay();
 
@@ -1762,6 +1788,8 @@ function rerenderCurrent(resetView = true) {
       { dotColor: hexToRgb(el.halftoneDotColor.value), bgColor: hexToRgb(el.halftoneBgColor.value),
         mask: exportMask(ht.w, ht.h) });
     if (state.viewMode === "output") refreshPreview(resetView);
+  } else if (state.renderedMode === "relief" && state.relief) {
+    reliefRefreshView(resetView);
   } else if (state.renderedMode === "stencil" && state.stencil) {
     const st = state.stencil;
     state.outputCanvas = renderStencilComposite(st.layers, st.w, st.h, st.colors, st.bg, 900, makeCanvas);
@@ -1803,6 +1831,7 @@ function setLayoutMode(mode) {
   el.stringartPanel.hidden = mode !== "stringart";
   el.screwartPanel.hidden = mode !== "screwart";
   el.stencilPanel.hidden = mode !== "stencil";
+  el.reliefPanel.hidden = mode !== "relief";
   el.halftonePanel.hidden = mode !== "halftone";
   // Rubik's Cube mode sizes itself in cube units (cubesWide/cubesTall),
   // Radial mode in rings/base segments (radialRings/radialBaseSegments),
@@ -1815,7 +1844,7 @@ function setLayoutMode(mode) {
   // unrelated size controls at once.
   el.sharedGridSizeControls.hidden =
     mode === "rubiks" || mode === "radial" || mode === "stainedglass" || mode === "lithophane"
-    || mode === "stringart" || mode === "leadedglass" || mode === "screwart" || mode === "stencil" || mode === "halftone";
+    || mode === "stringart" || mode === "leadedglass" || mode === "screwart" || mode === "stencil" || mode === "relief" || mode === "halftone";
   // Each mode's panel has a very different height (Classic's is long,
   // Cross-Stitch's is short, etc.), but they all share one scrolling
   // sidebar. Without this, the sidebar's scroll offset carries over
@@ -2071,6 +2100,9 @@ el.stringartGrid.addEventListener("input", () => {
   el.stringartGridVal.textContent = el.stringartGrid.value;
   updateStringartEstimate();
 });
+el.stringartReach.addEventListener("input", () => {
+  el.stringartReachVal.textContent = el.stringartReach.value;
+});
 el.stringartLines.addEventListener("input", () => {
   el.stringartLinesVal.textContent = el.stringartLines.value;
   updateStringartEstimate();
@@ -2261,7 +2293,8 @@ async function generateMosaic() {
 }
 
 function disableGenerationDependentButtons() {
-  for (const b of [el.previewStencilPdfBtn, el.exportStencilPdfBtn, el.exportStencilSvgBtn, el.exportStencilOverviewBtn]) b.disabled = true;
+  for (const b of [el.previewStencilPdfBtn, el.exportStencilPdfBtn, el.exportStencilSvgBtn, el.exportStencilOverviewBtn,
+    el.exportReliefSvgBtn, el.exportReliefCutBtn, el.previewReliefGuideBtn, el.exportReliefGuideBtn]) b.disabled = true;
   el.exportPngBtn.disabled = true;
   el.exportPreviewBtn.disabled = true;
   el.exportPosterBtn.disabled = true;
@@ -3680,7 +3713,10 @@ async function generateStringartMosaic() {
 
   try {
     const target = sampleStringartTarget(state.sourceCanvas);
-    const { sequence, canvas } = await callWorker("stringart", { target, shape, numPins, numLines });
+    const { sequence, canvas } = await callWorker("stringart", {
+      target, shape, numPins, numLines,
+      gridReach: shape === "grid" ? parseInt(el.stringartReach.value, 10) : null,
+    });
     const positions = stringartPinPositions(shape, numPins);
     const outputCanvas = renderStringartPreview(
       canvas, shape, STRINGART_WORKING_SIZE, threadColor, bgColor, makeCanvas);
@@ -5266,7 +5302,8 @@ async function exportPanels() {
 
 el.exportPngBtn.addEventListener("click", () => {
   if (!state.outputCanvas) return;
-  state.outputCanvas.toBlob(blob => downloadBlob(blob, "mosaic.png"), "image/png");
+  (state.renderedMode === "relief" && state.reliefClean ? state.reliefClean : state.outputCanvas)
+    .toBlob(blob => downloadBlob(blob, "mosaic.png"), "image/png");
 });
 
 // Lets the user look the full output over -- at its real size, not the
@@ -5867,6 +5904,7 @@ function generateForCurrentMode() {
     case "stringart": return generateStringartMosaic();
     case "screwart": return generateScrewartMosaic();
     case "stencil": return generateStencilMosaic();
+    case "relief": return generateReliefMosaic();
     case "halftone": return generateHalftoneMosaic();
     default: return generateMosaic();
   }
@@ -6061,9 +6099,22 @@ function collectSettings() {
       stencilOverlap: el.stencilOverlap.checked,
       stencilWidthIn: parseFloat(el.stencilWidthIn.value) || 8,
 
+      reliefColors: parseInt(el.reliefColors.value, 10),
+      reliefSmooth: parseInt(el.reliefSmooth.value, 10),
+      reliefMinArea: parseInt(el.reliefMinArea.value, 10),
+      reliefMode: el.reliefMode.value,
+      reliefDome: parseInt(el.reliefDome.value, 10),
+      reliefLevels: parseInt(el.reliefLevels.value, 10),
+      reliefMaterial: el.reliefMaterial.value,
+      reliefThickness: parseFloat(el.reliefThickness.value) || 1,
+      reliefWidthIn: parseFloat(el.reliefWidthIn.value) || 8,
+      reliefPaper: el.reliefPaper.value,
+      reliefShaded: el.reliefShaded.checked,
+
       stringartShape: currentStringartShape(),
       stringartNumPins: parseInt(el.stringartPins.value, 10),
       stringartGridSize: parseInt(el.stringartGrid.value, 10),
+      stringartGridReach: parseInt(el.stringartReach.value, 10),
       stringartNumLines: parseInt(el.stringartLines.value, 10),
       stringartFrameSize: parseFloat(el.stringartFrameSize.value) || 0,
       stringartFrameSizeUnit: el.stringartFrameSizeUnit.value,
@@ -6280,9 +6331,24 @@ function applySettings(data) {
   syncStencilColorPickers();
   updateStencilEstimate();
 
+  for (const key of ["reliefColors", "reliefSmooth", "reliefMinArea", "reliefDome", "reliefLevels"]) {
+    if (Number.isFinite(s[key])) { el[key].value = s[key]; el[key + "Val"].textContent = el[key].value; }
+  }
+  if (["nesting", "tone"].includes(s.reliefMode)) el.reliefMode.value = s.reliefMode;
+  if (typeof s.reliefMaterial === "string" && [...el.reliefMaterial.options].some(o => o.value === s.reliefMaterial)) el.reliefMaterial.value = s.reliefMaterial;
+  if (Number.isFinite(s.reliefThickness)) el.reliefThickness.value = s.reliefThickness;
+  if (Number.isFinite(s.reliefWidthIn)) el.reliefWidthIn.value = s.reliefWidthIn;
+  if (["Letter", "A4"].includes(s.reliefPaper)) el.reliefPaper.value = s.reliefPaper;
+  if (typeof s.reliefShaded === "boolean") el.reliefShaded.checked = s.reliefShaded;
+  syncReliefMaterialUi();
+
   if (s.stringartShape === "circle" || s.stringartShape === "rect" || s.stringartShape === "grid") {
     [...el.stringartShapeSeg.children].forEach(b => b.classList.toggle("active", b.dataset.shape === s.stringartShape));
     syncStringartShapeControls();
+  }
+  if (Number.isFinite(s.stringartGridReach)) {
+    el.stringartReach.value = s.stringartGridReach;
+    el.stringartReachVal.textContent = s.stringartGridReach;
   }
   if (Number.isFinite(s.stringartGridSize)) {
     el.stringartGrid.value = s.stringartGridSize;
@@ -6575,10 +6641,275 @@ refreshPreview();
 
 
 // ---------------------------------------------------------------------------
+// Layered Relief (stacked paper/board relief; see core/relief.js)
+// ---------------------------------------------------------------------------
+const reliefClamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const reliefIsActive = () => state.renderedMode === "relief" && !!state.relief;
+
+function reliefThicknessMm() {
+  return el.reliefMaterial.value === "custom"
+    ? reliefClamp(parseFloat(el.reliefThickness.value) || 1, 0.1, 10) : parseFloat(el.reliefMaterial.value);
+}
+const reliefWidthIn = () => reliefClamp(parseFloat(el.reliefWidthIn.value) || 8, 2, 60);
+const reliefMaterialName = () => el.reliefMaterial.options[el.reliefMaterial.selectedIndex].text.replace(/\s*\(.*\)$/, "");
+
+for (const [input, val] of [["reliefColors", "reliefColorsVal"], ["reliefSmooth", "reliefSmoothVal"],
+  ["reliefMinArea", "reliefMinAreaVal"], ["reliefDome", "reliefDomeVal"], ["reliefLevels", "reliefLevelsVal"]]) {
+  el[input].addEventListener("input", () => { el[val].textContent = el[input].value; });
+}
+function syncReliefMaterialUi() { el.reliefThicknessRow.hidden = el.reliefMaterial.value !== "custom"; }
+el.reliefMaterial.addEventListener("change", () => { syncReliefMaterialUi(); reliefRefreshView(); });
+el.reliefThickness.addEventListener("input", () => reliefRefreshView());
+el.reliefWidthIn.addEventListener("input", () => reliefRefreshView());
+el.reliefShaded.addEventListener("change", () => reliefRefreshView());
+for (const id of ["reliefMode", "reliefDome", "reliefLevels"]) {
+  el[id].addEventListener("change", () => { if (state.relief) reliefReassemble(); });
+}
+syncReliefMaterialUi();
+
+el.reliefGenerateBtn.addEventListener("click", generateReliefMosaic);
+
+async function generateReliefMosaic() {
+  if (!state.sourceCanvas) { setStatus("Load an image first."); return; }
+  el.reliefGenerateBtn.disabled = true;
+  el.reliefGenerateBtn.textContent = "Generating...";
+  setStatus("Building relief layers...");
+  await new Promise(r => setTimeout(r, 30));
+  try {
+    const { rgb, w, h } = stencilPrepareRgb(state.sourceCanvas, RELIEF_WORK_DETAIL, makeCanvas);
+    const base = reliefPrepare(rgb, w, h, parseInt(el.reliefColors.value, 10),
+      parseInt(el.reliefSmooth.value, 10), parseInt(el.reliefMinArea.value, 10));
+    const n = base.numColors;
+    state.relief = {
+      base, order: Array.from({ length: n }, (_, i) => i), included: Array(n).fill(true),
+      colors: base.bandColors.map(c => c.slice()), overrides: {}, rel: null, selected: null,
+    };
+    state.palette = null;
+    state.colorNames = [];
+    state.renderedMode = "relief";
+    state.renderedCellSize = 1;
+    state.renderedGridW = w;
+    state.renderedGridH = h;
+    resetSampleDisplay();
+    reliefReassemble();
+    el.exportPngBtn.disabled = false;
+    el.exportPreviewBtn.disabled = false;
+    for (const b of [el.exportReliefSvgBtn, el.exportReliefCutBtn, el.previewReliefGuideBtn, el.exportReliefGuideBtn]) b.disabled = false;
+    clearBrickLayout();
+    setViewMode("output");
+    const st = reliefStats(state.relief.rel, reliefWidthIn() * 25.4, reliefThicknessMm());
+    setStatus(`Done — ${st.pieces} pieces in ${st.levels} heights (${st.supports} support sheets).`);
+    await snapshotRecentProject();
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    el.reliefGenerateBtn.disabled = false;
+    el.reliefGenerateBtn.textContent = "Generate Mosaic";
+  }
+}
+
+/** Rebuild the piece tree/heights from the current layer list + settings. */
+function reliefReassemble() {
+  const r = state.relief;
+  if (!r) return;
+  const layers = r.order.filter(b => r.included[b]);
+  if (layers.length < 2) { setStatus("Keep at least two layers."); return; }
+  r.rel = reliefAssemble(r.base, layers, el.reliefMode.value, parseInt(el.reliefLevels.value, 10),
+    r.overrides, parseInt(el.reliefDome.value, 10));
+  reliefRefreshView();
+}
+
+function reliefSelectedNode() {
+  const r = state.relief;
+  return r && r.selected ? r.rel.nodes.find(n => n.key === r.selected) || null : null;
+}
+
+/** Re-render the preview, layer list, piece editor and summary. */
+function reliefRefreshView(resetView = false) {
+  const r = state.relief;
+  if (!r || !r.rel) return;
+  const widthMm = reliefWidthIn() * 25.4, thick = reliefThicknessMm();
+  const clean = renderReliefPreview(r.rel, r.colors, thick, widthMm, 900, el.reliefShaded.checked, makeCanvas);
+  state.reliefClean = clean;
+  let shown = clean;
+  const sel = reliefSelectedNode();
+  if (sel) {
+    shown = makeCanvas(clean.width, clean.height);
+    const ctx = shown.getContext("2d");
+    ctx.drawImage(clean, 0, 0);
+    const s = clean.width / r.rel.w;
+    ctx.beginPath();
+    for (const pts of reliefPieceLoops(r.rel, sel.id)) {
+      pts.forEach(([x, y], i) => (i ? ctx.lineTo(x * s, y * s) : ctx.moveTo(x * s, y * s)));
+      ctx.closePath();
+    }
+    ctx.lineWidth = 3; ctx.strokeStyle = "#ffd400"; ctx.setLineDash([8, 5]); ctx.stroke();
+  }
+  state.outputCanvas = shown;
+  state.renderedMode = "relief";
+  state.renderedGridW = r.rel.w;
+  state.renderedGridH = r.rel.h;
+  if (state.viewMode === "output") refreshPreview(resetView);
+  reliefRenderLayerList();
+  reliefRenderPieceEditor();
+  const st = reliefStats(r.rel, widthMm, thick);
+  el.reliefSummary.textContent =
+    `${st.pieces} pieces in ${st.levels} heights, ${st.supports} support sheets. `
+    + `Relief ${st.reliefMm.toFixed(1)} mm; frame depth at least ${st.frameDepthMm.toFixed(1)} mm. `
+    + `Smallest piece about ${st.smallestMm.toFixed(1)} mm.`;
+}
+
+function reliefRenderLayerList() {
+  const r = state.relief;
+  el.reliefLayerList.textContent = "";
+  r.order.forEach((band, pos) => {
+    const row = document.createElement("div");
+    row.className = "relief-layer";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = r.included[band]; cb.title = "Use this layer";
+    cb.addEventListener("change", () => { r.included[band] = cb.checked; r.overrides = {}; r.selected = null; reliefReassemble(); });
+    const col = document.createElement("input");
+    col.type = "color"; col.value = reliefHex(r.colors[band]); col.title = "Paper color";
+    col.addEventListener("input", () => { r.colors[band] = hexToRgb(col.value); reliefRefreshView(); });
+    const name = document.createElement("span");
+    name.className = "relief-name";
+    name.textContent = `${pos === 0 ? "Bottom" : pos === r.order.length - 1 ? "Top" : "Layer " + (pos + 1)}: ${reliefColorName(r.colors[band])}`;
+    const mk = (txt, title, delta) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = txt; b.title = title;
+      b.disabled = pos + delta < 0 || pos + delta >= r.order.length;
+      b.addEventListener("click", () => {
+        [r.order[pos], r.order[pos + delta]] = [r.order[pos + delta], r.order[pos]];
+        r.overrides = {}; r.selected = null; reliefReassemble();
+      });
+      return b;
+    };
+    row.append(cb, col, name, mk("▲", "Move up the stack", 1), mk("▼", "Move down the stack", -1));
+    el.reliefLayerList.append(row);
+  });
+}
+
+function reliefRenderPieceEditor() {
+  const r = state.relief;
+  const nd = reliefSelectedNode();
+  el.reliefPieceControls.hidden = !nd || nd.parent === null;
+  if (!nd) { el.reliefPieceHint.hidden = false; return; }
+  el.reliefPieceHint.hidden = nd.parent !== null ? false : false;
+  if (nd.parent === null) { el.reliefPieceHint.textContent = "That is the backing board; it always sits at the bottom."; return; }
+  el.reliefPieceHint.hidden = true;
+  const par = r.rel.nodes[nd.parent];
+  el.reliefPieceInfo.textContent =
+    `Piece ${nd.num} (${reliefColorName(r.colors[nd.band])}) sits on piece ${par.num}; height ${nd.level}`
+    + (nd.overridden ? " (set by you)" : ` (automatic: ${nd.stepDefault === 0 ? "flush" : nd.stepDefault === 1 ? "on top" : "raised " + (nd.stepDefault - 1)})`);
+  el.reliefPieceStep.value = String(nd.step);
+}
+
+el.reliefPieceStep.addEventListener("change", () => {
+  const nd = reliefSelectedNode();
+  if (!nd) return;
+  state.relief.overrides[nd.key] = parseInt(el.reliefPieceStep.value, 10);
+  reliefReassemble();
+});
+el.reliefPieceReset.addEventListener("click", () => {
+  const nd = reliefSelectedNode();
+  if (!nd) return;
+  delete state.relief.overrides[nd.key];
+  reliefReassemble();
+});
+el.reliefResetAll.addEventListener("click", () => {
+  if (!state.relief) return;
+  state.relief.overrides = {};
+  reliefReassemble();
+});
+
+function reliefPickAt(x, y) {
+  const r = state.relief;
+  const c = state.reliefClean;
+  if (!r || !r.rel || !c) return;
+  const id = reliefNodeAt(r.rel, Math.floor((x * r.rel.w) / c.width), Math.floor((y * r.rel.h) / c.height));
+  r.selected = id === null ? null : r.rel.nodes[id].key;
+  reliefRefreshView();
+}
+
+function pagesToPdfDoc(pages, dpi = 150, jpeg = false) {
+  const first = pages[0];
+  const inch = (px) => px / dpi;
+  const doc = new jspdf.jsPDF({
+    unit: "in", format: [inch(first.width), inch(first.height)],
+    orientation: first.width >= first.height ? "landscape" : "portrait",
+  });
+  pages.forEach((page, i) => {
+    if (i > 0) doc.addPage([inch(page.width), inch(page.height)], page.width >= page.height ? "landscape" : "portrait");
+    doc.addImage(jpeg ? page.toDataURL("image/jpeg", 0.9) : page.toDataURL("image/png"), jpeg ? "JPEG" : "PNG",
+      0, 0, inch(page.width), inch(page.height));
+  });
+  return doc;
+}
+function savePagesAsPdf(pages, filename, dpi = 150, jpeg = false) { pagesToPdfDoc(pages, dpi, jpeg).save(filename); }
+function pagesToPdfBytes(pages, dpi = 150, jpeg = false) { return new Uint8Array(pagesToPdfDoc(pages, dpi, jpeg).output("arraybuffer")); }
+
+function reliefGuidePages() {
+  const r = state.relief;
+  return renderReliefGuidePages(r.rel, reliefWidthIn(), reliefThicknessMm(), r.colors, el.reliefPaper.value, makeCanvas,
+    { materialName: reliefMaterialName() });
+}
+
+el.exportReliefSvgBtn.addEventListener("click", async () => {
+  if (!reliefIsActive()) return;
+  try {
+    const r = state.relief;
+    const zip = new JSZip();
+    const files = reliefSvgFiles(r.rel, reliefWidthIn() * 25.4, r.colors);
+    for (const f of files) zip.file(f.name, f.text);
+    downloadBlob(await zip.generateAsync({ type: "blob" }), "layered_relief_svg.zip");
+    setStatus(`Saved layered_relief_svg.zip (${files.length} SVG files)`);
+  } catch (err) {
+    setStatus(`Error building relief SVGs: ${err.message}`);
+    console.error(err);
+  }
+});
+
+el.exportReliefCutBtn.addEventListener("click", () => {
+  if (!reliefIsActive()) return;
+  try {
+    const r = state.relief;
+    const pages = renderReliefCutPages(r.rel, reliefWidthIn(), r.colors, el.reliefPaper.value, makeCanvas);
+    savePagesAsPdf(pages, "layered_relief_cut_sheets.pdf", 150, true);
+    setStatus(`Saved layered_relief_cut_sheets.pdf (${pages.length} pages, real size)`);
+  } catch (err) {
+    setStatus(`Error building cut sheets: ${err.message}`);
+    console.error(err);
+  }
+});
+
+el.exportReliefGuideBtn.addEventListener("click", exportReliefGuide);
+function exportReliefGuide() {
+  if (!reliefIsActive()) return;
+  try {
+    const pages = reliefGuidePages();
+    savePagesAsPdf(pages, "layered_relief_build_guide.pdf", 150, true);
+    setStatus(`Saved layered_relief_build_guide.pdf (${pages.length} pages)`);
+  } catch (err) {
+    setStatus(`Error building the build guide: ${err.message}`);
+    console.error(err);
+  }
+}
+el.previewReliefGuideBtn.addEventListener("click", () => {
+  if (!reliefIsActive()) return;
+  try {
+    openPdfExportPreviewDialog("Preview: Build guide (PDF)", reliefGuidePages(), exportReliefGuide);
+  } catch (err) {
+    setStatus(`Error building the guide preview: ${err.message}`);
+    console.error(err);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Product Kit (sellable bundle: branded PDF + listing images + listing text)
 // ---------------------------------------------------------------------------
 const KIT_MODE_LABELS = { classic: "Classic Grid", dice: "Dice", rubiks: "Rubik's Cube", crossstitch: "Cross-Stitch",
-  foundobject: "Found Object", screwart: "Screw Art", stringart: "String Art", stencil: "Stencil", halftone: "Halftone Dots" };
+  foundobject: "Found Object", screwart: "Screw Art", stringart: "String Art", stencil: "Stencil", relief: "Layered Relief", halftone: "Halftone Dots" };
 
 function kitSizeText(w, h) {
   const piece = parseFloat(el.pieceSize.value) || 0;
@@ -6678,6 +7009,22 @@ function collectKit() {
   } else if (mode === "stencil") {
     stats = { layers: state.stencil.layers.length, width_in_text: `${formatNumberTrim(state.stencil.widthIn)} in` };
     pages = stencilPrintPages();
+  } else if (mode === "relief") {
+    const r = state.relief;
+    const widthIn = reliefWidthIn(), thick = reliefThicknessMm();
+    const st = reliefStats(r.rel, widthIn * 25.4, thick);
+    const r1 = (v) => Math.floor(v * 10 + 0.5) / 10, r2 = (v) => Math.floor(v * 100 + 0.5) / 100;
+    stats = {
+      pieces: st.pieces, levels: st.levels, supports: st.supports,
+      colors: new Set(r.rel.nodes.map((n) => n.band)).size,
+      width_text: `${formatNumberTrim(widthIn)} in wide`,
+      material_text: `${formatNumberTrim(thick)} mm per layer (${reliefMaterialName().toLowerCase()})`,
+      frame_depth_text: `${formatNumberTrim(r1(st.frameDepthMm))} mm (${formatNumberTrim(r2(st.frameDepthMm / 25.4))} in)`,
+    };
+    pages = reliefGuidePages();
+    for (const f of reliefSvgFiles(r.rel, widthIn * 25.4, r.colors)) data["cut_files/" + f.name] = f.text;
+    data["cut_sheets_real_size.pdf"] = pagesToPdfBytes(
+      renderReliefCutPages(r.rel, widthIn, r.colors, el.reliefPaper.value, makeCanvas), 150, true);
   } else { // halftone
     const { diam, w, h } = state.halftone;
     const pitch = halftonePitchMm();
@@ -6692,7 +7039,7 @@ function collectKit() {
     data["halftone_dots.csv"] = halftoneCsv();
     data["halftone_dots.svg"] = halftoneSvgText(diam, w, h, pitch, mask, hexToRgb(el.halftoneDotColor.value));
   }
-  return { mode, stats, preview: state.outputCanvas, pages, data, variants };
+  return { mode, stats, preview: (mode === "relief" && state.reliefClean) || state.outputCanvas, pages, data, variants };
 }
 
 function loadImageFromDataUrl(url) {

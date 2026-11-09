@@ -762,3 +762,12 @@ button.primary:hover:not(:disabled) { background: var(--accent-hover); }
 .kit-field input[type="text"], .kit-field textarea { width: 100%; box-sizing: border-box; }
 .kit-check { display: flex; align-items: center; gap: 6px; }
 #kitSection[hidden], #kitButtons[hidden] { display: none !important; }
+
+/* Layered Relief panel */
+#reliefThicknessRow[hidden], #reliefPieceControls[hidden] { display: none; }
+.relief-layers { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.relief-layer { display: flex; align-items: center; gap: 6px; }
+.relief-layer input[type="color"] { width: 34px; height: 26px; padding: 0; border: 1px solid var(--border, #556); border-radius: 4px; background: none; cursor: pointer; }
+.relief-layer .relief-name { flex: 1; font-size: 12px; }
+.relief-layer button { padding: 0 8px; min-width: 28px; }
+.relief-piece select { width: 100%; margin: 4px 0; }

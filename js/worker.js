@@ -33,8 +33,9 @@ self.onmessage = (e) => {
       // for consistency) -- at the top of the pin/line sliders' range this
       // can take several seconds, so it runs here to keep the tab
       // responsive instead of freezing the main thread.
-      const { target, shape, numPins, numLines } = payload;
-      const { sequence, canvas } = generateStringartSequence(target, shape, numPins, numLines);
+      const { target, shape, numPins, numLines, gridReach = null } = payload;
+      const { sequence, canvas } = generateStringartSequence(target, shape, numPins, numLines,
+        undefined, undefined, gridReach);
       result = { sequence, canvas };
     } else {
       throw new Error(`Unknown worker task type: ${type}`);

@@ -5,8 +5,8 @@ export const KIT_CONTENT = {
   "thank_you": "Thank you for your purchase! I hope you enjoy every step of the build.",
   "no_brand_thank_you": "Happy building!",
   "included": [
-   "Printable PDF pattern — US Letter size",
-   "Printable PDF pattern — A4 size",
+   "Printable PDF pattern \u2014 US Letter size",
+   "Printable PDF pattern \u2014 A4 size",
    "Cover page, supplies list and step-by-step instructions",
    "Full pattern pages and key",
    "Full-resolution preview image of the finished look"
@@ -22,7 +22,7 @@ export const KIT_CONTENT = {
    "personalized gift",
    "wall art diy"
   ],
-  "listing_intro": "Instant digital download — no physical item will be shipped.",
+  "listing_intro": "Instant digital download \u2014 no physical item will be shipped.",
   "listing_notes": [
    "This is a DIGITAL product. You will receive downloadable files after purchase; nothing is mailed to you.",
    "Colors on your screen and printer may differ slightly from the preview.",
@@ -35,12 +35,12 @@ export const KIT_CONTENT = {
   "classic": {
    "label": "Pixel Mosaic",
    "title": "Custom Pixel Mosaic Paint-by-Number Pattern",
-   "subtitle": "{w} × {h} grid • {colors} colors",
+   "subtitle": "{w} \u00d7 {h} grid \u2022 {colors} colors",
    "tagline": "Pixel Art Pattern",
    "difficulty": "Easy",
    "time": "A relaxed weekend",
    "chips": [
-    "{w} × {h} squares",
+    "{w} \u00d7 {h} squares",
     "{colors} colors",
     "{size_text}",
     "Instant download"
@@ -48,7 +48,7 @@ export const KIT_CONTENT = {
    "glance": [
     [
      "Grid",
-     "{w} × {h} squares"
+     "{w} \u00d7 {h} squares"
     ],
     [
      "Pieces",
@@ -85,7 +85,7 @@ export const KIT_CONTENT = {
    "steps": [
     [
      "Print the pattern",
-     "Print the PDF at 100% (Actual Size). Use the page size that matches your printer — Letter or A4."
+     "Print the PDF at 100% (Actual Size). Use the page size that matches your printer \u2014 Letter or A4."
     ],
     [
      "Gather your colors",
@@ -93,7 +93,7 @@ export const KIT_CONTENT = {
     ],
     [
      "Mark your grid",
-     "Lightly draw a {w} × {h} grid on your backing board, with squares as large as your pieces."
+     "Lightly draw a {w} \u00d7 {h} grid on your backing board, with squares as large as your pieces."
     ],
     [
      "Work row by row",
@@ -111,7 +111,7 @@ export const KIT_CONTENT = {
    "tips": [
     "Work in good light and tick off rows as you finish them.",
     "Do a few test pieces first to confirm your colors look right together.",
-    "Stand back every so often — the picture appears from a distance."
+    "Stand back every so often \u2014 the picture appears from a distance."
    ],
    "blurb": "Turn a photo into a colorful pixel mosaic you can paint or build yourself. The pattern is printed as a numbered, row-by-row chart with a matching color key, so you always know exactly what goes where.",
    "tags": [
@@ -122,17 +122,17 @@ export const KIT_CONTENT = {
     "custom photo craft"
    ],
    "variant_label": "General",
-   "variant_line": "Works with any material — paint, tiles, beads, paper, fabric or anything else"
+   "variant_line": "Works with any material \u2014 paint, tiles, beads, paper, fabric or anything else"
   },
   "dice": {
    "label": "Dice Mosaic",
    "title": "Custom Dice Mosaic Pattern",
-   "subtitle": "{w} × {h} dice • {pieces} dice total",
+   "subtitle": "{w} \u00d7 {h} dice \u2022 {pieces} dice total",
    "tagline": "Dice Art Pattern",
    "difficulty": "Easy to Medium",
    "time": "A weekend project",
    "chips": [
-    "{w} × {h} dice",
+    "{w} \u00d7 {h} dice",
     "{pieces} dice total",
     "{size_text}",
     "Instant download"
@@ -140,7 +140,7 @@ export const KIT_CONTENT = {
    "glance": [
     [
      "Grid",
-     "{w} × {h} dice"
+     "{w} \u00d7 {h} dice"
     ],
     [
      "Dice needed",
@@ -165,7 +165,7 @@ export const KIT_CONTENT = {
    ],
    "supplies": [
     "{pieces} six-sided dice (the number of each face is listed on the key page)",
-    "A flat backing board — foam core, plywood or thick cardboard — sized to the finished piece",
+    "A flat backing board \u2014 foam core, plywood or thick cardboard \u2014 sized to the finished piece",
     "Strong craft glue, double-sided tape or hot glue",
     "Pencil and ruler",
     "Optional: shadow-box frame"
@@ -181,7 +181,7 @@ export const KIT_CONTENT = {
     ],
     [
      "Mark your board",
-     "Lightly draw a {w} × {h} grid on the board, one square per die."
+     "Lightly draw a {w} \u00d7 {h} grid on the board, one square per die."
     ],
     [
      "Lay out row by row",
@@ -189,7 +189,7 @@ export const KIT_CONTENT = {
     ],
     [
      "Check before you glue",
-     "Lay the whole design out dry and step back — the image appears from a distance. Fix any rows that look off."
+     "Lay the whole design out dry and step back \u2014 the image appears from a distance. Fix any rows that look off."
     ],
     [
      "Glue and display",
@@ -198,7 +198,7 @@ export const KIT_CONTENT = {
    ],
    "tips": [
     "Place dice with the pattern upright so rows don't rotate.",
-    "Dice come in different sizes — pick one size and use it throughout.",
+    "Dice come in different sizes \u2014 pick one size and use it throughout.",
     "Work in small sections and glue each section once checked."
    ],
    "blurb": "Build a photo out of ordinary dice! Each die is rotated to show 1 to 6 pips, so the whole wall of dice forms a picture. The pattern shows exactly which face goes in every square, plus a key that tells you how many of each face to buy.",
@@ -214,12 +214,12 @@ export const KIT_CONTENT = {
   "rubiks": {
    "label": "Rubik's Cube Mosaic",
    "title": "Custom Rubik's Cube Mosaic Pattern",
-   "subtitle": "{w} × {h} cubes • {pieces} cubes total",
+   "subtitle": "{w} \u00d7 {h} cubes \u2022 {pieces} cubes total",
    "tagline": "Cube Art Pattern",
    "difficulty": "Medium",
    "time": "Several evenings",
    "chips": [
-    "{w} × {h} cubes",
+    "{w} \u00d7 {h} cubes",
     "{pieces} cubes total",
     "{size_text}",
     "Instant download"
@@ -227,7 +227,7 @@ export const KIT_CONTENT = {
    "glance": [
     [
      "Cubes",
-     "{w} × {h}"
+     "{w} \u00d7 {h}"
     ],
     [
      "Cubes needed",
@@ -235,7 +235,7 @@ export const KIT_CONTENT = {
     ],
     [
      "Stickers per cube",
-     "9 (3 × 3 face)"
+     "9 (3 \u00d7 3 face)"
     ],
     [
      "Finished size",
@@ -255,7 +255,7 @@ export const KIT_CONTENT = {
     ]
    ],
    "supplies": [
-    "{pieces} standard 3×3 puzzle cubes",
+    "{pieces} standard 3\u00d73 puzzle cubes",
     "A flat backing board or frame sized to the finished piece",
     "Strong adhesive suitable for plastic",
     "Pencil and ruler",
@@ -268,7 +268,7 @@ export const KIT_CONTENT = {
     ],
     [
      "Read the pattern",
-     "Each 3 × 3 block shows the face one cube needs. Letters stand for the six colors on the key page."
+     "Each 3 \u00d7 3 block shows the face one cube needs. Letters stand for the six colors on the key page."
     ],
     [
      "Set each cube",
@@ -276,7 +276,7 @@ export const KIT_CONTENT = {
     ],
     [
      "Arrange the cubes",
-     "Lay the finished cubes out in a {w} × {h} grid, starting from the top-left."
+     "Lay the finished cubes out in a {w} \u00d7 {h} grid, starting from the top-left."
     ],
     [
      "Check the picture",
@@ -290,9 +290,9 @@ export const KIT_CONTENT = {
    "tips": [
     "Mark the top of every cube so none rotate during assembly.",
     "Work in rows so mistakes are easy to trace.",
-    "Use a level when hanging — a full cube wall is heavy."
+    "Use a level when hanging \u2014 a full cube wall is heavy."
    ],
-   "blurb": "Make a striking wall of puzzle cubes. The image is reduced to the six cube colors and split into 3 × 3 faces, so every cube is one pixel-block of the picture.",
+   "blurb": "Make a striking wall of puzzle cubes. The image is reduced to the six cube colors and split into 3 \u00d7 3 faces, so every cube is one pixel-block of the picture.",
    "tags": [
     "rubiks cube art",
     "cube mosaic",
@@ -304,12 +304,12 @@ export const KIT_CONTENT = {
   "crossstitch": {
    "label": "Cross-Stitch",
    "title": "Custom Photo Cross-Stitch Pattern",
-   "subtitle": "{w} × {h} stitches • {colors} colors",
+   "subtitle": "{w} \u00d7 {h} stitches \u2022 {colors} colors",
    "tagline": "Cross Stitch Chart",
    "difficulty": "Medium",
    "time": "Weeks of relaxed stitching",
    "chips": [
-    "{w} × {h} stitches",
+    "{w} \u00d7 {h} stitches",
     "{colors} floss colors",
     "{size_text}",
     "Instant download"
@@ -317,7 +317,7 @@ export const KIT_CONTENT = {
    "glance": [
     [
      "Stitch count",
-     "{w} × {h}"
+     "{w} \u00d7 {h}"
     ],
     [
      "Total stitches",
@@ -341,7 +341,7 @@ export const KIT_CONTENT = {
     ]
    ],
    "supplies": [
-    "Aida or evenweave fabric, at least 2–3 in (5–7 cm) larger than the design on every side",
+    "Aida or evenweave fabric, at least 2\u20133 in (5\u20137 cm) larger than the design on every side",
     "Embroidery floss in the {colors} colors on the key (DMC numbers listed)",
     "Tapestry needle and embroidery hoop or frame",
     "Small scissors",
@@ -391,12 +391,12 @@ export const KIT_CONTENT = {
   "foundobject": {
    "label": "Found Object Mosaic",
    "title": "Custom Found-Object Mosaic Pattern",
-   "subtitle": "{w} × {h} grid • {colors} color groups",
+   "subtitle": "{w} \u00d7 {h} grid \u2022 {colors} color groups",
    "tagline": "Found Object Art Pattern",
    "difficulty": "Easy to Medium",
    "time": "A weekend project",
    "chips": [
-    "{w} × {h} pieces",
+    "{w} \u00d7 {h} pieces",
     "{colors} color groups",
     "{size_text}",
     "Instant download"
@@ -404,7 +404,7 @@ export const KIT_CONTENT = {
    "glance": [
     [
      "Grid",
-     "{w} × {h} pieces"
+     "{w} \u00d7 {h} pieces"
     ],
     [
      "Pieces",
@@ -428,7 +428,7 @@ export const KIT_CONTENT = {
     ]
    ],
    "supplies": [
-    "About {pieces} small objects (buttons, bottle caps, beads, keys, tiles…) sorted into {colors} color groups",
+    "About {pieces} small objects (buttons, bottle caps, beads, keys, tiles\u2026) sorted into {colors} color groups",
     "A backing board sized to the finished piece",
     "Strong glue suitable for your objects",
     "Pencil and ruler",
@@ -445,7 +445,7 @@ export const KIT_CONTENT = {
     ],
     [
      "Mark your grid",
-     "Lightly draw a {w} × {h} grid on the board."
+     "Lightly draw a {w} \u00d7 {h} grid on the board."
     ],
     [
      "Place row by row",
@@ -477,12 +477,12 @@ export const KIT_CONTENT = {
   "screwart": {
    "label": "Screw Art",
    "title": "Custom Screw Art Pattern (Depth Guide)",
-   "subtitle": "{w} × {h} screws • depths {depth_text}",
+   "subtitle": "{w} \u00d7 {h} screws \u2022 depths {depth_text}",
    "tagline": "Screw Art Guide",
    "difficulty": "Medium",
    "time": "A weekend project",
    "chips": [
-    "{w} × {h} screws",
+    "{w} \u00d7 {h} screws",
     "{pieces} screws total",
     "{size_text}",
     "Instant download"
@@ -490,7 +490,7 @@ export const KIT_CONTENT = {
    "glance": [
     [
      "Grid",
-     "{w} × {h} screws"
+     "{w} \u00d7 {h} screws"
     ],
     [
      "Screws needed",
@@ -531,7 +531,7 @@ export const KIT_CONTENT = {
     ],
     [
      "Prepare the panel",
-     "Sand and finish the panel, then mark the {w} × {h} grid of screw positions."
+     "Sand and finish the panel, then mark the {w} \u00d7 {h} grid of screw positions."
     ],
     [
      "Pre-drill",
@@ -567,7 +567,7 @@ export const KIT_CONTENT = {
   "stringart": {
    "label": "String Art",
    "title": "Custom String Art Pattern",
-   "subtitle": "{pins} pins • {lines} thread lines • {shape_text} frame",
+   "subtitle": "{pins} pins \u2022 {lines} thread lines \u2022 {shape_text} frame",
    "tagline": "String Art Pattern",
    "difficulty": "Medium to Advanced",
    "time": "A relaxing weekend",
@@ -643,7 +643,7 @@ export const KIT_CONTENT = {
    "tips": [
     "Use a pencil check-mark every 20 lines to keep your place.",
     "Keep steady tension so lines stay straight.",
-    "Take breaks — string art is a long, meditative build."
+    "Take breaks \u2014 string art is a long, meditative build."
    ],
    "blurb": "String art portraits from a single continuous thread! The pattern gives the exact pin-to-pin sequence, so the crossing threads gradually reveal the photo.",
    "tags": [
@@ -657,7 +657,7 @@ export const KIT_CONTENT = {
   "stringart_grid": {
    "label": "String Art (Nail Grid)",
    "title": "Custom Nail Grid String Art Pattern",
-   "subtitle": "{grid_text} nail grid • {lines} thread lines",
+   "subtitle": "{grid_text} nail grid \u2022 {lines} thread lines",
    "tagline": "Nail Grid String Art Pattern",
    "difficulty": "Medium to Advanced",
    "time": "A relaxing weekend",
@@ -741,8 +741,8 @@ export const KIT_CONTENT = {
    "tips": [
     "Use a pencil check-mark every 20 lines to keep your place.",
     "Keep steady tension so lines stay straight.",
-    "Work in a bright spot with the printed grid map beside you — finding the next nail by letter and number goes fast.",
-    "Take breaks — nail-grid string art is a long, meditative build."
+    "Work in a bright spot with the printed grid map beside you \u2014 finding the next nail by letter and number goes fast.",
+    "Take breaks \u2014 nail-grid string art is a long, meditative build."
    ],
    "blurb": "Portrait string art on a grid of nails! Instead of nails around the edge, every nail on the board is a lettered, numbered point, and one continuous thread follows the exact nail-to-nail sequence while the crossing lines slowly reveal the photo.",
    "tags": [
@@ -758,7 +758,7 @@ export const KIT_CONTENT = {
   "stencil": {
    "label": "Stencil Set",
    "title": "Custom Pop-Art Stencil Set Pattern",
-   "subtitle": "{layers} layered stencils • {width_text}",
+   "subtitle": "{layers} layered stencils \u2022 {width_text}",
    "tagline": "Layered Stencil Pattern",
    "difficulty": "Medium",
    "time": "An afternoon",
@@ -793,7 +793,7 @@ export const KIT_CONTENT = {
    "supplies": [
     "Stencil material (cardstock, acetate, or thin plastic)",
     "Craft knife or cutting machine and a cutting mat",
-    "Acrylic or spray paint — {layers} colors",
+    "Acrylic or spray paint \u2014 {layers} colors",
     "Painter's tape and a canvas or panel",
     "Sponge brushes or spray cans"
    ],
@@ -824,7 +824,7 @@ export const KIT_CONTENT = {
     ]
    ],
    "tips": [
-    "Use thin coats — several light layers beat one heavy one.",
+    "Use thin coats \u2014 several light layers beat one heavy one.",
     "Number your stencils on the back after cutting.",
     "Practice the sequence on scrap paper first."
    ],
@@ -840,12 +840,12 @@ export const KIT_CONTENT = {
   "halftone": {
    "label": "Halftone Dots",
    "title": "Custom Halftone Dot Art Pattern",
-   "subtitle": "{w} × {h} dots • {sizes} dot sizes",
+   "subtitle": "{w} \u00d7 {h} dots \u2022 {sizes} dot sizes",
    "tagline": "Halftone Dot Art Pattern",
    "difficulty": "Easy to Medium",
    "time": "A weekend project",
    "chips": [
-    "{w} × {h} dots",
+    "{w} \u00d7 {h} dots",
     "{sizes} sizes",
     "{size_text}",
     "Instant download"
@@ -853,7 +853,7 @@ export const KIT_CONTENT = {
    "glance": [
     [
      "Grid",
-     "{w} × {h} dots"
+     "{w} \u00d7 {h} dots"
     ],
     [
      "Dots",
@@ -885,7 +885,7 @@ export const KIT_CONTENT = {
     ]
    ],
    "supplies": [
-    "A panel to drill, punch or paint — wood, acrylic, metal or thick card",
+    "A panel to drill, punch or paint \u2014 wood, acrylic, metal or thick card",
     "Drill bits or punches in these sizes: {bits_text}",
     "Pencil, ruler or the printed colour-in sheet",
     "Optional: backing paper or light behind the panel, paint markers or paint",
@@ -934,12 +934,12 @@ export const KIT_CONTENT = {
   "classic_lego": {
    "label": "Building Brick Mosaic",
    "title": "Custom Building Brick Mosaic Pattern",
-   "subtitle": "{w} × {h} studs • {colors} brick colors",
+   "subtitle": "{w} \u00d7 {h} studs \u2022 {colors} brick colors",
    "tagline": "Building Brick Pattern",
    "difficulty": "Easy to Medium",
    "time": "A weekend project",
    "chips": [
-    "{w} × {h} studs",
+    "{w} \u00d7 {h} studs",
     "{colors} brick colors",
     "{bricks} bricks",
     "Instant download"
@@ -947,7 +947,7 @@ export const KIT_CONTENT = {
    "glance": [
     [
      "Grid",
-     "{w} × {h} studs"
+     "{w} \u00d7 {h} studs"
     ],
     [
      "Studs",
@@ -976,7 +976,7 @@ export const KIT_CONTENT = {
    ],
    "supplies": [
     "Plates or bricks in the {colors} colors on the key (a merged parts list is included)",
-    "A baseplate, or several joined, covering at least {w} × {h} studs",
+    "A baseplate, or several joined, covering at least {w} \u00d7 {h} studs",
     "Optional: brick separator and tweezers",
     "Optional: frame or shadow box"
    ],
@@ -991,7 +991,7 @@ export const KIT_CONTENT = {
     ],
     [
      "Prepare the baseplate",
-     "Join baseplates if needed so you have at least {w} × {h} studs."
+     "Join baseplates if needed so you have at least {w} \u00d7 {h} studs."
     ],
     [
      "Build row by row",
@@ -1008,7 +1008,7 @@ export const KIT_CONTENT = {
    ],
    "tips": [
     "Build in small sections so mistakes are easy to spot.",
-    "Use larger bricks where the layout page allows — it is faster and sturdier.",
+    "Use larger bricks where the layout page allows \u2014 it is faster and sturdier.",
     "Sort pieces by color into small trays before you start."
    ],
    "blurb": "Turn a photo into a mosaic built from bricks. The pattern is matched to a building-brick color range, with a numbered chart, a color key and a brick layout that merges same-color studs into larger pieces.",
@@ -1025,12 +1025,12 @@ export const KIT_CONTENT = {
   "classic_perler": {
    "label": "Fuse Bead Pattern",
    "title": "Custom Fuse Bead Pattern",
-   "subtitle": "{w} × {h} beads • {colors} bead colors",
+   "subtitle": "{w} \u00d7 {h} beads \u2022 {colors} bead colors",
    "tagline": "Fuse Bead Pattern",
    "difficulty": "Easy",
    "time": "An afternoon",
    "chips": [
-    "{w} × {h} beads",
+    "{w} \u00d7 {h} beads",
     "{colors} bead colors",
     "{pegboards} pegboards",
     "Instant download"
@@ -1038,7 +1038,7 @@ export const KIT_CONTENT = {
    "glance": [
     [
      "Grid",
-     "{w} × {h} beads"
+     "{w} \u00d7 {h} beads"
     ],
     [
      "Beads",
@@ -1049,7 +1049,7 @@ export const KIT_CONTENT = {
      "{colors}"
     ],
     [
-     "Pegboards (29 × 29)",
+     "Pegboards (29 \u00d7 29)",
      "{pegboards}"
     ],
     [
@@ -1067,7 +1067,7 @@ export const KIT_CONTENT = {
    ],
    "supplies": [
     "Fuse beads in the {colors} colors on the key ({pieces} beads in total)",
-    "{pegboards} standard 29 × 29 pegboards (or one large board)",
+    "{pegboards} standard 29 \u00d7 29 pegboards (or one large board)",
     "Ironing paper or parchment and an iron",
     "Optional: tweezers, bead tray, frame"
    ],
@@ -1112,6 +1112,102 @@ export const KIT_CONTENT = {
    ],
    "variant_label": "Fuse Beads",
    "variant_line": "Colors matched to a Perler-style fuse bead range, with bead counts per color"
+  },
+  "relief": {
+   "label": "Layered Relief",
+   "title": "Custom Layered Paper Relief Pattern (SVG Cut Files + Build Guide)",
+   "subtitle": "{pieces} pieces \u2022 {levels} heights \u2022 {width_text}",
+   "tagline": "Layered Relief Guide",
+   "difficulty": "Medium",
+   "time": "A weekend project",
+   "chips": [
+    "{pieces} pieces",
+    "{levels} heights",
+    "{width_text}",
+    "SVG cut files",
+    "Instant download"
+   ],
+   "glance": [
+    [
+     "Pieces",
+     "{pieces}"
+    ],
+    [
+     "Heights stacked",
+     "{levels}"
+    ],
+    [
+     "Support sheets",
+     "{supports}"
+    ],
+    [
+     "Finished size",
+     "{width_text}"
+    ],
+    [
+     "Frame depth needed",
+     "{frame_depth_text}"
+    ],
+    [
+     "Technique",
+     "Cut & stack, layered relief"
+    ],
+    [
+     "Difficulty",
+     "{difficulty}"
+    ],
+    [
+     "Build time",
+     "{time}"
+    ]
+   ],
+   "supplies": [
+    "Sheet material in {colors} colors \u2014 {material_text}",
+    "Craft knife or a cutting machine (SVG files included) and a cutting mat",
+    "Tacky glue, double-sided tape or foam dots",
+    "Tweezers, ruler and pencil",
+    "A shadow-box frame at least {frame_depth_text} deep"
+   ],
+   "steps": [
+    [
+     "Cut the pieces",
+     "Cut the SVG files on a cutting machine, or print the real-size cut sheets and cut along the lines. Each piece is numbered."
+    ],
+    [
+     "Cut the support sheets",
+     "Some pieces sit higher than their neighbours. Cut the support sheets and stack them under those pieces as the guide shows."
+    ],
+    [
+     "Glue the backing",
+     "Glue piece 1, the backing, into the frame."
+    ],
+    [
+     "Build up, level by level",
+     "Work from level 1 to the top. The guide has a map for every level showing exactly where each numbered piece goes."
+    ],
+    [
+     "Dry-fit first",
+     "Check each piece against its outline before gluing; thin dots of glue keep edges flat."
+    ],
+    [
+     "Frame it",
+     "Let everything dry flat, then close the frame."
+    ]
+   ],
+   "tips": [
+    "Thicker material (chipboard, foam, thin wood) casts deeper shadows and looks more sculpted.",
+    "Pencil each piece number on the back as you cut.",
+    "Keep tweezers handy \u2014 the smallest pieces are only a few millimetres across."
+   ],
+   "blurb": "Turn a photo into a sculpted layered relief. Every shape is its own piece stacked on the piece it sits on, so noses, brows and highlights rise above the background. Includes SVG cut files for cutting machines, real-size printable cut sheets and a step-by-step build guide.",
+   "tags": [
+    "layered paper art",
+    "paper cut art",
+    "svg cut file",
+    "cricut cut file",
+    "layered relief",
+    "shadow box art"
+   ]
   }
  }
 };

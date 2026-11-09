@@ -15,7 +15,7 @@ export const MAX_TAG_LEN = 20;
 export const MAX_UPSCALE = 2.5;
 export const LANDSCAPE_ASPECT = 1.25;
 export const KEY_MODES = ["classic", "dice", "rubiks", "crossstitch", "foundobject"]; // last pattern page is a key/legend
-export const SUPPORTED_MODES = ["classic", "dice", "rubiks", "crossstitch", "foundobject", "screwart", "stringart", "stencil", "halftone"];
+export const SUPPORTED_MODES = ["classic", "dice", "rubiks", "crossstitch", "foundobject", "screwart", "stringart", "stencil", "relief", "halftone"];
 
 const cpLen = (s) => Array.from(s).length;
 const cpSlice = (s, a, b) => Array.from(s).slice(a, b).join("");

@@ -107,6 +107,7 @@
       <button data-layout="stringart" type="button">String Art</button>
       <button data-layout="screwart" type="button">Screw Art</button>
       <button data-layout="stencil" type="button">Stencil</button>
+      <button data-layout="relief" type="button">Layered Relief</button>
       <button data-layout="halftone" type="button">Halftone Dots</button>
     </div>
 
@@ -720,6 +721,94 @@
       </div>
     </div>
 
+    <div id="reliefPanel" hidden>
+      <p class="hint">Layered relief: the photo is cut into tone colors, and every
+        shape becomes its own piece of paper, cardboard, foam or thin wood stacked
+        on the piece it sits on &mdash; so a nose rises above the cheek, and the
+        cheek above the background. Shapes are separate pieces even when they share
+        a color, so the same color can sit at different heights. Export SVG cut files
+        for a cutting machine, a cut-it-yourself PDF at real size, and a build guide.
+        Number of colors and the shared Grid controls above have no effect here.</p>
+
+      <label for="reliefColors">Colors (tone bands)</label>
+      <div class="slider-row"><input type="range" id="reliefColors" min="3" max="8" value="5"><span class="slider-val" id="reliefColorsVal">5</span></div>
+
+      <label for="reliefSmooth">Smoothing</label>
+      <div class="slider-row"><input type="range" id="reliefSmooth" min="0" max="4" value="1"><span class="slider-val" id="reliefSmoothVal">1</span></div>
+
+      <label for="reliefMinArea">Minimum piece size (px)</label>
+      <div class="slider-row"><input type="range" id="reliefMinArea" min="1" max="60" value="12"><span class="slider-val" id="reliefMinAreaVal">12</span></div>
+
+      <label for="reliefMode">Height rule</label>
+      <select id="reliefMode">
+        <option value="nesting" selected>Nesting (each piece sits on the piece under it)</option>
+        <option value="tone">Tone (lighter = higher, skipping steps)</option>
+      </select>
+
+      <label for="reliefDome">Center boost (features deep inside the subject rise higher)</label>
+      <div class="slider-row"><input type="range" id="reliefDome" min="0" max="3" value="2"><span class="slider-val" id="reliefDomeVal">2</span></div>
+
+      <label for="reliefLevels">Most heights stacked</label>
+      <div class="slider-row"><input type="range" id="reliefLevels" min="2" max="8" value="6"><span class="slider-val" id="reliefLevelsVal">6</span></div>
+
+      <label for="reliefMaterial">Sheet material</label>
+      <select id="reliefMaterial">
+        <option value="0.3">Cardstock (~0.3 mm)</option>
+        <option value="0.5">Heavy cardstock / poster board (~0.5 mm)</option>
+        <option value="1" selected>Chipboard (~1 mm)</option>
+        <option value="1.6">Thin basswood 1/16 in (~1.6 mm)</option>
+        <option value="2">Craft foam (~2 mm)</option>
+        <option value="custom">Custom...</option>
+      </select>
+      <div class="piece-size-row" id="reliefThicknessRow" hidden>
+        <input type="number" id="reliefThickness" min="0.1" max="10" step="0.1" value="1"> mm
+      </div>
+
+      <label>Finished width (inches) &amp; paper</label>
+      <div class="piece-size-row">
+        <input type="number" id="reliefWidthIn" min="2" max="60" step="0.5" value="8">
+        <select id="reliefPaper"><option value="Letter" selected>Letter</option><option value="A4">A4</option></select>
+      </div>
+
+      <label class="checkbox-label"><input type="checkbox" id="reliefShaded" checked> Shaded preview (shows the depth)</label>
+
+      <label>Layers (bottom to top) &amp; paper colors</label>
+      <div id="reliefLayerList" class="relief-layers"><p class="hint">Generate to edit the layers.</p></div>
+
+      <label>Piece heights</label>
+      <div id="reliefPieceEditor" class="relief-piece">
+        <p class="hint" id="reliefPieceHint">Click a piece in the preview to raise it, lower it or make it flush.</p>
+        <div id="reliefPieceControls" hidden>
+          <div id="reliefPieceInfo" class="hint"></div>
+          <select id="reliefPieceStep">
+            <option value="0">Flush inlay (set into the piece below)</option>
+            <option value="1">On top of the piece below</option>
+            <option value="2">Raised 1 sheet higher</option>
+            <option value="3">Raised 2 sheets higher</option>
+            <option value="4">Raised 3 sheets higher</option>
+          </select>
+          <div class="button-row two-up">
+            <button id="reliefPieceReset" type="button">Back to automatic</button>
+            <button id="reliefResetAll" type="button">Reset all pieces</button>
+          </div>
+        </div>
+      </div>
+
+      <p class="hint" id="reliefSummary"></p>
+
+      <div class="button-row"><button id="reliefGenerateBtn" class="primary" disabled>Generate Mosaic</button></div>
+
+      <label>Export</label>
+      <div class="button-row two-up">
+        <button id="exportReliefSvgBtn" disabled>Save Cut Files (SVG zip)</button>
+        <button id="exportReliefCutBtn" disabled>Save Cut Sheets (PDF)</button>
+      </div>
+      <div class="button-row two-up">
+        <button id="previewReliefGuideBtn" disabled>Preview Guide...</button>
+        <button id="exportReliefGuideBtn" disabled>Save Build Guide (PDF)</button>
+      </div>
+    </div>
+
     <div id="halftonePanel" hidden>
       <p class="hint">Equally spaced dots whose diameter changes with tone &mdash;
         like a perforated panel or newspaper halftone. Darker areas get bigger
@@ -804,6 +893,9 @@
       <div id="stringartGridGroup" hidden>
         <label for="stringartGrid">Nails per side</label>
         <div class="slider-row"><input type="range" id="stringartGrid" min="8" max="26" value="23"><span class="slider-val" id="stringartGridVal">23</span></div>
+        <label for="stringartReach">Longest line <span class="hint-inline">(% of board diagonal)</span></label>
+        <div class="slider-row"><input type="range" id="stringartReach" min="20" max="100" value="60"><span class="slider-val" id="stringartReachVal">60</span></div>
+        <p class="hint">Lower = shorter lines that hook the nails across the middle of the board; 100 = unlimited, mostly edge-to-edge lines.</p>
       </div>
 
       <label for="stringartLines">Number of lines</label>

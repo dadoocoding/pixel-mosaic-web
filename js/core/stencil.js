@@ -451,7 +451,7 @@ export function stencilMaskLoops(mask, w, h) {
   return loops;
 }
 
-function chaikin(pts, iterations = 2) {
+export function chaikin(pts, iterations = 2) {
   for (let it = 0; it < iterations; it++) {
     const out = [];
     const n = pts.length;
@@ -466,7 +466,7 @@ function chaikin(pts, iterations = 2) {
 }
 
 /** 2-decimal, round-half-up (matches Python's _stencil_fmt). */
-function fmt(v) {
+export function fmt(v) {
   const n = Math.floor(v * 100 + 0.5);
   return `${Math.floor(n / 100)}.${String(n % 100).padStart(2, "0")}`;
 }

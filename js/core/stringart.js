@@ -29,6 +29,9 @@ export const STRINGART_LINE_WEIGHT = 18.0; // 0-255 darkness removed from every 
 export const STRINGART_GRID_MIN_SIDE = 8;   // "Nail grid" frame: nails per side (square grid, so pins = side * side)
 export const STRINGART_GRID_MAX_SIDE = 26;  // 26 x 26 = 676 nails -- same compute ceiling as the 720-pin edge frames; also A..Z column letters
 export const STRINGART_GRID_MIN_SPAN = 3;   // grid frame: skip candidate nails closer than this many grid steps (Chebyshev)
+export const STRINGART_GRID_REACH_MIN = 20;      // nail grid: longest allowed line, as a % of the board's diagonal
+export const STRINGART_GRID_REACH_MAX = 100;     // 100 = no limit (edge-to-edge corner chords allowed)
+export const STRINGART_GRID_REACH_DEFAULT = 60;  // medium-long lines: reads as a clear picture while still hooking the nails across the middle of the board
 export const STRINGART_SKIP_ADJACENT = 3; // candidate pins within this many indices of the current pin are skipped
 
 /** Pin [x, y] positions around the frame, index 0..numPins-1, evenly
@@ -95,6 +98,15 @@ export function stringartColumnLetters(col) {
     out = String.fromCharCode(65 + rem) + out;
   }
   return out;
+}
+
+/** Longest allowed line on a nail grid, in grid steps (Euclidean): the given
+ * percent of the board's diagonal. Without this limit the greedy search
+ * prefers the very longest chords (they cross the most pixels), so almost
+ * every line runs edge-to-edge and the interior nails never get used. */
+export function stringartGridReachSteps(gridN, reachPercent) {
+  const pct = reachPercent == null ? STRINGART_GRID_REACH_DEFAULT : reachPercent;
+  return pct / 100.0 * (gridN - 1) * Math.sqrt(2.0);
 }
 
 /** Human-readable nail name. Edge frames: just the pin number. Nail grid:
@@ -193,7 +205,7 @@ export function sampleStringartTarget(sourceCanvas, size = STRINGART_WORKING_SIZ
  * final size*size darkness array (same scale as target: 255 =
  * untouched/white, lower = more thread crossed it). */
 export function generateStringartSequence(target, shape, numPins, numLines,
-  size = STRINGART_WORKING_SIZE, lineWeight = STRINGART_LINE_WEIGHT) {
+  size = STRINGART_WORKING_SIZE, lineWeight = STRINGART_LINE_WEIGHT, gridReach = null) {
   if (numPins < 2) throw new Error("Need at least 2 pins.");
   const positions = stringartPinPositions(shape, numPins, size);
   const canvas = new Float64Array(size * size).fill(255.0);
@@ -202,15 +214,22 @@ export function generateStringartSequence(target, shape, numPins, numLines,
   // every step of the greedy loop below (each step only re-evaluates the
   // numPins-ish candidates leaving the *current* pin, not all pairs).
   const lineCache = new Map();
+  const gridN = shape === "grid" ? stringartGridSide(numPins) : 0;
+  const reach = gridN ? stringartGridReachSteps(gridN, gridReach) : 0;
+  const reach2 = reach * reach;
+  // Nail grid: a line must span at least GRID_MIN_SPAN steps (Chebyshev) and at most the reach.
+  const gridOk = (a, b) => {
+    const dx = Math.abs((a % gridN) - (b % gridN)), dy = Math.abs(Math.floor(a / gridN) - Math.floor(b / gridN));
+    return Math.max(dx, dy) >= STRINGART_GRID_MIN_SPAN && dx * dx + dy * dy <= reach2;
+  };
   for (let i = 0; i < numPins; i++) {
     for (let j = i + 1; j < numPins; j++) {
+      if (gridN && !gridOk(i, j)) continue;
       const [x0, y0] = positions[i], [x1, y1] = positions[j];
       lineCache.set(i * numPins + j, stringartLinePixelIndices(x0, y0, x1, y1, size));
     }
   }
   const keyFor = (a, b) => (a < b ? a * numPins + b : b * numPins + a);
-
-  const gridN = shape === "grid" ? stringartGridSide(numPins) : 0;
 
   let current = 0;
   const sequence = [0];
@@ -219,9 +238,8 @@ export function generateStringartSequence(target, shape, numPins, numLines,
     for (let j = 0; j < numPins; j++) {
       if (j === current) continue;
       if (gridN) {
-        // nail grid: "too close" is measured in grid steps, not index distance
-        if (Math.max(Math.abs((j % gridN) - (current % gridN)),
-          Math.abs(Math.floor(j / gridN) - Math.floor(current / gridN))) < STRINGART_GRID_MIN_SPAN) continue;
+        // nail grid: distance is measured in grid steps, not index distance
+        if (!gridOk(current, j)) continue;
       } else {
         const d = Math.min(((j - current) % numPins + numPins) % numPins, ((current - j) % numPins + numPins) % numPins);
         if (d < STRINGART_SKIP_ADJACENT) continue;
